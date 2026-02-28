@@ -238,68 +238,95 @@ fn register_channels(config: &Config, registry: &mut ChannelRegistry) {
     }
 }
 
-/// Spawn channel adapter tasks on the given runtime. Returns named handles for cleanup.
-pub(crate) fn start_channels(
+/// Try to start a single channel adapter. Returns a JoinHandle if successful.
+pub(crate) fn start_single_channel(
+    name: &str,
     state: &Arc<AppState>,
     rt: &tokio::runtime::Handle,
-) -> std::collections::HashMap<String, tokio::task::JoinHandle<()>> {
-    let mut handles = std::collections::HashMap::new();
+) -> Option<tokio::task::JoinHandle<()>> {
     let config = &state.config;
 
-    // Telegram
-    if let Some(tg_cfg) =
-        config.channel_config::<rayclaw::channels::telegram::TelegramChannelConfig>("telegram")
-    {
-        if !tg_cfg.bot_token.trim().is_empty() {
+    match name {
+        "telegram" => {
+            let tg_cfg = config
+                .channel_config::<rayclaw::channels::telegram::TelegramChannelConfig>("telegram")?;
+            if tg_cfg.bot_token.trim().is_empty() {
+                return None;
+            }
             let s = state.clone();
             let bot = teloxide::Bot::new(&tg_cfg.bot_token);
             info!("Starting Telegram bot");
-            handles.insert("telegram".into(), rt.spawn(async move {
+            Some(rt.spawn(async move {
                 if let Err(e) = rayclaw::telegram::start_telegram_bot(s, bot).await {
                     error!("Telegram bot exited: {e}");
                 }
-            }));
+            }))
         }
-    }
-
-    // Discord
-    if let Some(dc_cfg) =
-        config.channel_config::<rayclaw::channels::discord::DiscordChannelConfig>("discord")
-    {
-        if !dc_cfg.bot_token.trim().is_empty() {
+        "discord" => {
+            let dc_cfg = config
+                .channel_config::<rayclaw::channels::discord::DiscordChannelConfig>("discord")?;
+            if dc_cfg.bot_token.trim().is_empty() {
+                return None;
+            }
             let s = state.clone();
             let token = dc_cfg.bot_token.clone();
             info!("Starting Discord bot");
-            handles.insert("discord".into(), rt.spawn(async move {
+            Some(rt.spawn(async move {
                 rayclaw::discord::start_discord_bot(s, &token).await;
-            }));
+            }))
         }
-    }
-
-    // Slack
-    if let Some(slack_cfg) =
-        config.channel_config::<rayclaw::channels::slack::SlackChannelConfig>("slack")
-    {
-        if !slack_cfg.bot_token.trim().is_empty() && !slack_cfg.app_token.trim().is_empty() {
+        "slack" => {
+            let slack_cfg = config
+                .channel_config::<rayclaw::channels::slack::SlackChannelConfig>("slack")?;
+            if slack_cfg.bot_token.trim().is_empty() || slack_cfg.app_token.trim().is_empty() {
+                return None;
+            }
             let s = state.clone();
             info!("Starting Slack bot (Socket Mode)");
-            handles.insert("slack".into(), rt.spawn(async move {
+            Some(rt.spawn(async move {
                 rayclaw::channels::slack::start_slack_bot(s).await;
-            }));
+            }))
+        }
+        "feishu" => {
+            let feishu_cfg = config
+                .channel_config::<rayclaw::channels::feishu::FeishuChannelConfig>("feishu")?;
+            if feishu_cfg.app_id.trim().is_empty() || feishu_cfg.app_secret.trim().is_empty() {
+                return None;
+            }
+            let s = state.clone();
+            info!(
+                "Starting Feishu bot (domain={}, mode={})",
+                feishu_cfg.domain, feishu_cfg.connection_mode
+            );
+            Some(rt.spawn(async move {
+                rayclaw::channels::feishu::start_feishu_bot(s).await;
+            }))
+        }
+        _ => {
+            warn!("Unknown channel: {name}");
+            None
         }
     }
+}
 
-    // Feishu
-    if let Some(feishu_cfg) =
-        config.channel_config::<rayclaw::channels::feishu::FeishuChannelConfig>("feishu")
-    {
-        if !feishu_cfg.app_id.trim().is_empty() && !feishu_cfg.app_secret.trim().is_empty() {
-            let s = state.clone();
-            info!("Starting Feishu bot (domain={}, mode={})",
-                feishu_cfg.domain, feishu_cfg.connection_mode);
-            handles.insert("feishu".into(), rt.spawn(async move {
-                rayclaw::channels::feishu::start_feishu_bot(s).await;
-            }));
+/// Spawn channel adapter tasks on the given runtime, respecting enabled state.
+/// Returns named handles for cleanup.
+pub(crate) fn start_channels(
+    state: &Arc<AppState>,
+    rt: &tokio::runtime::Handle,
+    enabled: &std::collections::HashMap<String, bool>,
+) -> std::collections::HashMap<String, tokio::task::JoinHandle<()>> {
+    let mut handles = std::collections::HashMap::new();
+
+    for name in &["telegram", "discord", "slack", "feishu"] {
+        // Default to true (start) if no explicit enabled entry
+        let is_enabled = enabled.get(*name).copied().unwrap_or(true);
+        if !is_enabled {
+            info!("Channel {name} disabled by user — skipping");
+            continue;
+        }
+        if let Some(handle) = start_single_channel(name, state, rt) {
+            handles.insert(name.to_string(), handle);
         }
     }
 
@@ -325,6 +352,8 @@ pub fn run() {
         .setup(|app| {
             let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
 
+            let channel_enabled = state::load_channel_enabled();
+
             let (app_state, init_error, handles) = rt.block_on(async {
                 info!("Loading config...");
                 match Config::load() {
@@ -335,7 +364,7 @@ pub fn run() {
                         );
                         match init_agent(config).await {
                             Ok(state) => {
-                                let h = start_channels(&state, &tokio::runtime::Handle::current());
+                                let h = start_channels(&state, &tokio::runtime::Handle::current(), &channel_enabled);
                                 (Some(state), None, h)
                             }
                             Err(e) => {
@@ -356,6 +385,7 @@ pub fn run() {
                 init_error: RwLock::new(init_error),
                 runtime: rt,
                 channel_handles: std::sync::Mutex::new(handles),
+                channel_enabled: std::sync::Mutex::new(channel_enabled),
             });
 
             info!("Tauri setup complete");
@@ -366,6 +396,7 @@ pub fn run() {
             commands::get_config,
             commands::save_config,
             commands::get_channel_status,
+            commands::toggle_channel,
             commands::send_message,
             commands::get_history,
             commands::get_chats,

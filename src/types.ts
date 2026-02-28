@@ -63,6 +63,7 @@ export interface StoredMessage {
 export interface ChannelStatus {
   name: string;
   configured: boolean;
+  enabled: boolean;
   running: boolean;
 }
 

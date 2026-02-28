@@ -18,6 +18,10 @@ export async function getChannelStatus(): Promise<ChannelStatus[]> {
   return invoke("get_channel_status");
 }
 
+export async function toggleChannel(name: string, enabled: boolean): Promise<void> {
+  return invoke("toggle_channel", { name, enabled });
+}
+
 export async function sendMessage(chatId: number, content: string): Promise<void> {
   return invoke("send_message", { chatId, content });
 }

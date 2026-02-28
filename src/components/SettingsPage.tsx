@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { getConfig, saveConfig, getChannelStatus } from "../lib/tauri-api";
+import { getConfig, saveConfig, getChannelStatus, toggleChannel } from "../lib/tauri-api";
 import type { ConfigDto, ChannelStatus } from "../types";
 
 const PROVIDERS = [
@@ -73,6 +73,16 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   }
 
   const statusOf = (name: string) => channelStatuses.find((s) => s.name === name);
+
+  const handleToggle = async (name: string, enabled: boolean) => {
+    try {
+      await toggleChannel(name, enabled);
+      // Refresh statuses immediately
+      setTimeout(fetchStatuses, 500);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   const isBedrock = config.llm_provider === "bedrock";
   const hasTelegram = !!config.telegram_bot_token;
@@ -217,9 +227,21 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
           {/* Telegram */}
           <details className="settings-channel" open={hasTelegram}>
             <summary>
-              Telegram
-              {statusOf("telegram")?.running && <span className="status-pill status-running">Running</span>}
-              {statusOf("telegram")?.configured && !statusOf("telegram")?.running && <span className="status-pill status-stopped">Stopped</span>}
+              <span className="channel-summary-left">
+                Telegram
+                {statusOf("telegram")?.running && <span className="status-pill status-running">Running</span>}
+                {statusOf("telegram")?.configured && !statusOf("telegram")?.running && <span className="status-pill status-stopped">Stopped</span>}
+              </span>
+              {statusOf("telegram")?.configured && (
+                <label className="channel-switch" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={statusOf("telegram")?.enabled ?? true}
+                    onChange={(e) => handleToggle("telegram", e.target.checked)}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              )}
             </summary>
             <label className="settings-field">
               <span>Bot Token</span>
@@ -244,9 +266,21 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
           {/* Discord */}
           <details className="settings-channel" open={hasDiscord}>
             <summary>
-              Discord
-              {statusOf("discord")?.running && <span className="status-pill status-running">Running</span>}
-              {statusOf("discord")?.configured && !statusOf("discord")?.running && <span className="status-pill status-stopped">Stopped</span>}
+              <span className="channel-summary-left">
+                Discord
+                {statusOf("discord")?.running && <span className="status-pill status-running">Running</span>}
+                {statusOf("discord")?.configured && !statusOf("discord")?.running && <span className="status-pill status-stopped">Stopped</span>}
+              </span>
+              {statusOf("discord")?.configured && (
+                <label className="channel-switch" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={statusOf("discord")?.enabled ?? true}
+                    onChange={(e) => handleToggle("discord", e.target.checked)}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              )}
             </summary>
             <label className="settings-field">
               <span>Bot Token</span>
@@ -262,9 +296,21 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
           {/* Slack */}
           <details className="settings-channel" open={hasSlack}>
             <summary>
-              Slack
-              {statusOf("slack")?.running && <span className="status-pill status-running">Running</span>}
-              {statusOf("slack")?.configured && !statusOf("slack")?.running && <span className="status-pill status-stopped">Stopped</span>}
+              <span className="channel-summary-left">
+                Slack
+                {statusOf("slack")?.running && <span className="status-pill status-running">Running</span>}
+                {statusOf("slack")?.configured && !statusOf("slack")?.running && <span className="status-pill status-stopped">Stopped</span>}
+              </span>
+              {statusOf("slack")?.configured && (
+                <label className="channel-switch" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={statusOf("slack")?.enabled ?? true}
+                    onChange={(e) => handleToggle("slack", e.target.checked)}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              )}
             </summary>
             <label className="settings-field">
               <span>Bot Token</span>
@@ -289,9 +335,21 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
           {/* Feishu */}
           <details className="settings-channel" open={hasFeishu}>
             <summary>
-              Feishu / Lark
-              {statusOf("feishu")?.running && <span className="status-pill status-running">Running</span>}
-              {statusOf("feishu")?.configured && !statusOf("feishu")?.running && <span className="status-pill status-stopped">Stopped</span>}
+              <span className="channel-summary-left">
+                Feishu / Lark
+                {statusOf("feishu")?.running && <span className="status-pill status-running">Running</span>}
+                {statusOf("feishu")?.configured && !statusOf("feishu")?.running && <span className="status-pill status-stopped">Stopped</span>}
+              </span>
+              {statusOf("feishu")?.configured && (
+                <label className="channel-switch" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={statusOf("feishu")?.enabled ?? true}
+                    onChange={(e) => handleToggle("feishu", e.target.checked)}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              )}
             </summary>
             <label className="settings-field">
               <span>App ID</span>

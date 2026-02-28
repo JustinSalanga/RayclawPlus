@@ -414,8 +414,9 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
             format!("Failed to initialize agent: {e}")
         })?;
 
-    // Start channels
-    let new_handles = crate::start_channels(&new_state, &rt_handle);
+    // Start channels (respecting enabled state)
+    let enabled_map = desktop.channel_enabled.lock().unwrap().clone();
+    let new_handles = crate::start_channels(&new_state, &rt_handle, &enabled_map);
 
     {
         let mut state_lock = desktop.app_state.write().await;
@@ -442,6 +443,7 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
 pub struct ChannelStatusDto {
     pub name: String,
     pub configured: bool,
+    pub enabled: bool,
     pub running: bool,
 }
 
@@ -450,6 +452,7 @@ pub async fn get_channel_status(app: tauri::AppHandle) -> Result<Vec<ChannelStat
     let desktop = app.state::<DesktopState>();
     let config = rayclaw::config::Config::load().unwrap_or_else(|_| default_config());
     let handles = desktop.channel_handles.lock().unwrap();
+    let enabled_map = desktop.channel_enabled.lock().unwrap();
 
     let channels = vec![
         (
@@ -479,6 +482,7 @@ pub async fn get_channel_status(app: tauri::AppHandle) -> Result<Vec<ChannelStat
     Ok(channels
         .into_iter()
         .map(|(name, configured)| {
+            let enabled = enabled_map.get(name).copied().unwrap_or(true);
             let running = handles
                 .get(name)
                 .map(|h| !h.is_finished())
@@ -486,10 +490,59 @@ pub async fn get_channel_status(app: tauri::AppHandle) -> Result<Vec<ChannelStat
             ChannelStatusDto {
                 name: name.to_string(),
                 configured,
+                enabled,
                 running,
             }
         })
         .collect())
+}
+
+#[tauri::command]
+pub async fn toggle_channel(
+    app: tauri::AppHandle,
+    name: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let desktop = app.state::<DesktopState>();
+    info!("toggle_channel: {name} → enabled={enabled}");
+
+    // Update persisted enabled state
+    {
+        let mut enabled_map = desktop.channel_enabled.lock().unwrap();
+        enabled_map.insert(name.clone(), enabled);
+        crate::state::save_channel_enabled(&enabled_map);
+    }
+
+    if enabled {
+        // Start the channel if not already running
+        let state = require_state(&desktop).await?;
+        let rt_handle = desktop.runtime.handle().clone();
+        let mut handles = desktop.channel_handles.lock().unwrap();
+
+        // Check if already running
+        if let Some(h) = handles.get(&name) {
+            if !h.is_finished() {
+                info!("toggle_channel: {name} already running");
+                return Ok(());
+            }
+        }
+
+        if let Some(handle) = crate::start_single_channel(&name, &state, &rt_handle) {
+            handles.insert(name.clone(), handle);
+            info!("toggle_channel: {name} started");
+        } else {
+            return Err(format!("Channel {name} is not configured"));
+        }
+    } else {
+        // Stop the channel
+        let mut handles = desktop.channel_handles.lock().unwrap();
+        if let Some(h) = handles.remove(&name) {
+            h.abort();
+            info!("toggle_channel: {name} stopped");
+        }
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
