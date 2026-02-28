@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { MoreHorizontal, FileDown, Trash2 } from "lucide-react";
 import type { ChatSummary } from "../types";
 import { channelLabel } from "../types";
 import { deleteChat, exportChatMarkdown } from "../lib/tauri-api";
@@ -12,12 +13,6 @@ interface SidebarProps {
   onChatDeleted: () => void;
 }
 
-interface ContextMenu {
-  chatId: number;
-  x: number;
-  y: number;
-}
-
 export default function Sidebar({
   chats,
   activeChatId,
@@ -26,30 +21,28 @@ export default function Sidebar({
   onOpenSettings,
   onChatDeleted,
 }: SidebarProps) {
-  const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
+  const [menuChatId, setMenuChatId] = useState<number | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Close context menu on click outside
+  // Close menu on click outside
   useEffect(() => {
-    if (!contextMenu) return;
+    if (menuChatId === null) return;
     const handler = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setContextMenu(null);
+        setMenuChatId(null);
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [contextMenu]);
+  }, [menuChatId]);
 
-  const handleContextMenu = (e: React.MouseEvent, chatId: number) => {
-    e.preventDefault();
-    setContextMenu({ chatId, x: e.clientX, y: e.clientY });
+  const toggleMenu = (e: React.MouseEvent, chatId: number) => {
+    e.stopPropagation();
+    setMenuChatId(menuChatId === chatId ? null : chatId);
   };
 
-  const handleDelete = async () => {
-    if (!contextMenu) return;
-    const chatId = contextMenu.chatId;
-    setContextMenu(null);
+  const handleDelete = async (chatId: number) => {
+    setMenuChatId(null);
     try {
       await deleteChat(chatId);
       onChatDeleted();
@@ -58,13 +51,10 @@ export default function Sidebar({
     }
   };
 
-  const handleExport = async () => {
-    if (!contextMenu) return;
-    const chatId = contextMenu.chatId;
-    setContextMenu(null);
+  const handleExport = async (chatId: number) => {
+    setMenuChatId(null);
     try {
       const md = await exportChatMarkdown(chatId);
-      // Create a download via a temporary link
       const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -92,20 +82,49 @@ export default function Sidebar({
       <div className="sidebar-list">
         {chats.map((chat) => {
           const badge = channelLabel(chat.chat_type);
+          const isMenuOpen = menuChatId === chat.chat_id;
           return (
             <div
               key={chat.chat_id}
               className={`sidebar-item ${chat.chat_id === activeChatId ? "sidebar-item-active" : ""}`}
               onClick={() => onSelectChat(chat.chat_id)}
-              onContextMenu={(e) => handleContextMenu(e, chat.chat_id)}
             >
-              <div className="sidebar-item-title">
-                {badge && <span className="channel-badge">{badge}</span>}
-                {chat.chat_title || `Chat ${chat.chat_id}`}
+              <div className="sidebar-item-row">
+                <div className="sidebar-item-title">
+                  {badge && <span className="channel-badge">{badge}</span>}
+                  {chat.chat_title || `Chat ${chat.chat_id}`}
+                </div>
+                <button
+                  className="sidebar-item-more"
+                  onClick={(e) => toggleMenu(e, chat.chat_id)}
+                  title="More"
+                >
+                  <MoreHorizontal size={14} />
+                </button>
               </div>
               {chat.last_message_preview && (
                 <div className="sidebar-item-preview">
                   {chat.last_message_preview.slice(0, 60)}
+                </div>
+              )}
+
+              {/* Dropdown menu */}
+              {isMenuOpen && (
+                <div ref={menuRef} className="sidebar-dropdown" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    className="sidebar-dropdown-item"
+                    onClick={() => handleExport(chat.chat_id)}
+                  >
+                    <FileDown size={14} />
+                    Export as Markdown
+                  </button>
+                  <button
+                    className="sidebar-dropdown-item sidebar-dropdown-danger"
+                    onClick={() => handleDelete(chat.chat_id)}
+                  >
+                    <Trash2 size={14} />
+                    Delete Chat
+                  </button>
                 </div>
               )}
             </div>
@@ -120,22 +139,6 @@ export default function Sidebar({
           Settings
         </button>
       </div>
-
-      {/* Context menu */}
-      {contextMenu && (
-        <div
-          ref={menuRef}
-          className="context-menu"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-        >
-          <button className="context-menu-item" onClick={handleExport}>
-            Export as Markdown
-          </button>
-          <button className="context-menu-item context-menu-danger" onClick={handleDelete}>
-            Delete Chat
-          </button>
-        </div>
-      )}
     </aside>
   );
 }
