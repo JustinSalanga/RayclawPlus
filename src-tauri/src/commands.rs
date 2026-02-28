@@ -1,4 +1,5 @@
 use crate::state::DesktopState;
+use rayclaw::runtime::AppState;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -104,7 +105,6 @@ fn home_dir() -> String {
     std::env::var("HOME").unwrap_or_else(|_| ".".into())
 }
 
-/// Expand leading `~` to the user's home directory.
 fn expand_tilde(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
         format!("{}/{}", home_dir(), rest)
@@ -115,7 +115,6 @@ fn expand_tilde(path: &str) -> String {
     }
 }
 
-/// Create a default Config from a minimal YAML string with expanded paths.
 fn default_config() -> rayclaw::config::Config {
     let home = home_dir();
     let yaml = format!(
@@ -140,9 +139,13 @@ fn mask_secret(s: &str) -> String {
     }
 }
 
-async fn require_agent(state: &DesktopState) -> Result<Arc<rayclaw::sdk::RayClawAgent>, String> {
+fn is_masked(s: &str) -> bool {
+    s.contains("...") || s.contains("*")
+}
+
+async fn require_state(state: &DesktopState) -> Result<Arc<AppState>, String> {
     state
-        .agent
+        .app_state
         .read()
         .await
         .clone()
@@ -155,14 +158,77 @@ fn default_config_path() -> String {
     format!("{dir}/rayclaw.config.yaml")
 }
 
-/// Extract a string from a channels YAML value.
-fn channel_str(channels: &std::collections::HashMap<String, serde_yaml::Value>, channel: &str, key: &str) -> Option<String> {
+fn channel_str(
+    channels: &std::collections::HashMap<String, serde_yaml::Value>,
+    channel: &str,
+    key: &str,
+) -> Option<String> {
     channels
         .get(channel)
         .and_then(|v| v.get(key))
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
+}
+
+fn apply_channel_field(
+    channels: &mut std::collections::HashMap<String, serde_yaml::Value>,
+    channel: &str,
+    key: &str,
+    value: Option<String>,
+) {
+    if let Some(val) = value.filter(|s| !s.is_empty()) {
+        let entry = channels
+            .entry(channel.to_string())
+            .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+        if let serde_yaml::Value::Mapping(ref mut map) = entry {
+            map.insert(
+                serde_yaml::Value::String(key.to_string()),
+                serde_yaml::Value::String(val),
+            );
+        }
+    }
+}
+
+fn apply_channel_secret(
+    channels: &mut std::collections::HashMap<String, serde_yaml::Value>,
+    channel: &str,
+    key: &str,
+    value: Option<String>,
+) {
+    if let Some(ref val) = value {
+        if is_masked(val) {
+            return;
+        }
+    }
+    apply_channel_field(channels, channel, key, value);
+}
+
+/// Store a user message in the database (since we use AppState directly, not SDK).
+fn store_user_message(state: &AppState, chat_id: i64, text: &str) {
+    let _ = state.db.upsert_chat(chat_id, None, "private");
+    let msg = rayclaw::db::StoredMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        chat_id,
+        sender_name: "user".to_string(),
+        content: text.to_string(),
+        is_from_bot: false,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    };
+    let _ = state.db.store_message(&msg);
+}
+
+/// Store a bot response in the database.
+fn store_bot_message(state: &AppState, chat_id: i64, text: &str) {
+    let msg = rayclaw::db::StoredMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        chat_id,
+        sender_name: "rayclaw".to_string(),
+        content: text.to_string(),
+        is_from_bot: true,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    };
+    let _ = state.db.store_message(&msg);
 }
 
 // ---------------------------------------------------------------------------
@@ -172,10 +238,10 @@ fn channel_str(channels: &std::collections::HashMap<String, serde_yaml::Value>, 
 #[tauri::command]
 pub async fn get_status(app: tauri::AppHandle) -> Result<AppStatus, String> {
     let state = app.state::<DesktopState>();
-    let agent = state.agent.read().await;
+    let app_state = state.app_state.read().await;
     let error = state.init_error.read().await;
     Ok(AppStatus {
-        ready: agent.is_some(),
+        ready: app_state.is_some(),
         error: error.clone(),
     })
 }
@@ -209,34 +275,35 @@ pub async fn get_config(_app: tauri::AppHandle) -> Result<ConfigDto, String> {
         soul_path: config.soul_path.clone(),
         memory_token_budget: config.memory_token_budget,
         reflector_enabled: config.reflector_enabled,
-        // Channels — Telegram (legacy flat fields)
         telegram_bot_token: if config.telegram_bot_token.is_empty() {
             String::new()
         } else {
             mask_secret(&config.telegram_bot_token)
         },
         bot_username: config.bot_username.clone(),
-        // Channels — Discord
         discord_bot_token: config.discord_bot_token.as_ref().map(|s| mask_secret(s)),
-        // Channels — Slack (from channels map)
-        slack_bot_token: channel_str(&config.channels, "slack", "bot_token").map(|s| mask_secret(&s)),
-        slack_app_token: channel_str(&config.channels, "slack", "app_token").map(|s| mask_secret(&s)),
-        // Channels — Feishu (from channels map)
+        slack_bot_token: channel_str(&config.channels, "slack", "bot_token")
+            .map(|s| mask_secret(&s)),
+        slack_app_token: channel_str(&config.channels, "slack", "app_token")
+            .map(|s| mask_secret(&s)),
         feishu_app_id: channel_str(&config.channels, "feishu", "app_id"),
-        feishu_app_secret: channel_str(&config.channels, "feishu", "app_secret").map(|s| mask_secret(&s)),
-        // Channels — Web
+        feishu_app_secret: channel_str(&config.channels, "feishu", "app_secret")
+            .map(|s| mask_secret(&s)),
         web_enabled: config.web_enabled,
     })
 }
 
 #[tauri::command]
 pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(), String> {
-    info!("save_config: provider={}, model={}", config.llm_provider, config.model);
+    info!(
+        "save_config: provider={}, model={}",
+        config.llm_provider, config.model
+    );
     let mut full_config = rayclaw::config::Config::load().unwrap_or_else(|_| default_config());
 
-    // Apply DTO fields (skip masked secrets — keep existing value if masked)
+    // Apply DTO fields (skip masked secrets)
     full_config.llm_provider = config.llm_provider;
-    if !config.api_key.is_empty() && !config.api_key.contains("...") && !config.api_key.contains("*") {
+    if !config.api_key.is_empty() && !is_masked(&config.api_key) {
         full_config.api_key = config.api_key;
     }
     full_config.model = config.model;
@@ -244,17 +311,16 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
     full_config.max_tokens = config.max_tokens;
     full_config.show_thinking = config.show_thinking;
 
-    // AWS — only update if not masked
     full_config.aws_region = config.aws_region;
     if let Some(ref key) = config.aws_access_key_id {
-        if !key.contains("...") && !key.contains("*") {
+        if !is_masked(key) {
             full_config.aws_access_key_id = Some(key.clone());
         }
     } else {
         full_config.aws_access_key_id = None;
     }
     if let Some(ref key) = config.aws_secret_access_key {
-        if !key.contains("...") && !key.contains("*") {
+        if !is_masked(key) {
             full_config.aws_secret_access_key = Some(key.clone());
         }
     } else {
@@ -265,7 +331,6 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
     full_config.max_tool_iterations = config.max_tool_iterations;
     full_config.max_history_messages = config.max_history_messages;
     full_config.max_session_messages = config.max_session_messages;
-    // Expand tilde in paths before saving
     full_config.data_dir = expand_tilde(&config.data_dir);
     full_config.working_dir = expand_tilde(&config.working_dir);
     full_config.timezone = config.timezone;
@@ -275,42 +340,42 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
     full_config.reflector_enabled = config.reflector_enabled;
 
     // Channels — Telegram
-    if !config.telegram_bot_token.is_empty()
-        && !config.telegram_bot_token.contains("...")
-        && !config.telegram_bot_token.contains("*")
-    {
+    if !config.telegram_bot_token.is_empty() && !is_masked(&config.telegram_bot_token) {
         full_config.telegram_bot_token = config.telegram_bot_token;
     }
     full_config.bot_username = config.bot_username;
 
     // Channels — Discord
     if let Some(ref token) = config.discord_bot_token {
-        if !token.contains("...") && !token.contains("*") {
+        if !is_masked(token) {
             full_config.discord_bot_token = Some(token.clone());
         }
     } else {
         full_config.discord_bot_token = None;
     }
 
-    // Channels — Slack (stored in channels map)
+    // Channels — Slack
     apply_channel_secret(&mut full_config.channels, "slack", "bot_token", config.slack_bot_token);
     apply_channel_secret(&mut full_config.channels, "slack", "app_token", config.slack_app_token);
 
-    // Channels — Feishu (stored in channels map)
+    // Channels — Feishu
     apply_channel_field(&mut full_config.channels, "feishu", "app_id", config.feishu_app_id);
-    apply_channel_secret(&mut full_config.channels, "feishu", "app_secret", config.feishu_app_secret);
+    apply_channel_secret(
+        &mut full_config.channels,
+        "feishu",
+        "app_secret",
+        config.feishu_app_secret,
+    );
 
     // Channels — Web
     full_config.web_enabled = config.web_enabled;
 
     // Validate
-    info!("save_config: validating config...");
-    full_config
-        .validate_for_sdk()
-        .map_err(|e| {
-            error!("save_config: validation failed: {e}");
-            format!("Validation failed: {e}")
-        })?;
+    info!("save_config: validating...");
+    full_config.validate_for_sdk().map_err(|e| {
+        error!("save_config: validation failed: {e}");
+        format!("Validation failed: {e}")
+    })?;
 
     // Save to file
     let save_path = rayclaw::config::Config::resolve_config_path()
@@ -319,27 +384,29 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(default_config_path);
     info!("save_config: saving to {save_path}");
-    full_config
-        .save_yaml(&save_path)
-        .map_err(|e| {
-            error!("save_config: failed to save: {e}");
-            format!("Failed to save config: {e}")
-        })?;
+    full_config.save_yaml(&save_path).map_err(|e| {
+        error!("save_config: failed to save: {e}");
+        format!("Failed to save config: {e}")
+    })?;
 
-    // Log channel diagnostics after save
-    crate::log_channel_diagnostics(&full_config);
+    // Abort old channel tasks
+    let desktop = app.state::<DesktopState>();
+    {
+        let mut handles = desktop.channel_handles.lock().unwrap();
+        for h in handles.drain(..) {
+            h.abort();
+        }
+        info!("save_config: aborted old channel tasks");
+    }
 
-    // Reinitialize agent on the stored runtime (separate from Tauri's)
-    info!("save_config: reinitializing agent (SDK mode)...");
-    let state = app.state::<DesktopState>();
-    let rt_handle = state.runtime.handle().clone();
-    let new_agent = rt_handle
-        .spawn(async move {
-            rayclaw::sdk::RayClawAgent::new(full_config).await
-        })
+    // Reinitialize agent + channels on stored runtime
+    info!("save_config: reinitializing agent + channels...");
+    let rt_handle = desktop.runtime.handle().clone();
+    let new_state = rt_handle
+        .spawn(async move { crate::init_agent(full_config).await })
         .await
         .map_err(|e| {
-            error!("save_config: spawn task failed: {e}");
+            error!("save_config: spawn failed: {e}");
             format!("Task failed: {e}")
         })?
         .map_err(|e| {
@@ -347,53 +414,24 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
             format!("Failed to initialize agent: {e}")
         })?;
 
-    info!("save_config: agent reinitialized successfully");
+    // Start channels
+    let new_handles = crate::start_channels(&new_state, &rt_handle);
 
     {
-        let mut agent_lock = state.agent.write().await;
-        *agent_lock = Some(Arc::new(new_agent));
+        let mut state_lock = desktop.app_state.write().await;
+        *state_lock = Some(new_state);
     }
     {
-        let mut err_lock = state.init_error.write().await;
+        let mut err_lock = desktop.init_error.write().await;
         *err_lock = None;
     }
+    {
+        let mut handles = desktop.channel_handles.lock().unwrap();
+        *handles = new_handles;
+    }
 
+    info!("save_config: complete");
     Ok(())
-}
-
-/// Apply a non-secret channel field to the channels map.
-fn apply_channel_field(
-    channels: &mut std::collections::HashMap<String, serde_yaml::Value>,
-    channel: &str,
-    key: &str,
-    value: Option<String>,
-) {
-    if let Some(val) = value.filter(|s| !s.is_empty()) {
-        let entry = channels
-            .entry(channel.to_string())
-            .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-        if let serde_yaml::Value::Mapping(ref mut map) = entry {
-            map.insert(
-                serde_yaml::Value::String(key.to_string()),
-                serde_yaml::Value::String(val),
-            );
-        }
-    }
-}
-
-/// Apply a secret channel field (skip if masked).
-fn apply_channel_secret(
-    channels: &mut std::collections::HashMap<String, serde_yaml::Value>,
-    channel: &str,
-    key: &str,
-    value: Option<String>,
-) {
-    if let Some(ref val) = value {
-        if val.contains("...") || val.contains("*") {
-            return; // masked — keep existing
-        }
-    }
-    apply_channel_field(channels, channel, key, value);
 }
 
 // ---------------------------------------------------------------------------
@@ -406,17 +444,16 @@ pub async fn send_message(
     chat_id: i64,
     content: String,
 ) -> Result<(), String> {
-    let state = app.state::<DesktopState>();
-    let agent = require_agent(&state).await?;
-    let rt_handle = state.runtime.handle().clone();
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let rt_handle = desktop.runtime.handle().clone();
 
-    info!("send_message: chat_id={chat_id}, content_len={}", content.len());
+    info!("send_message: chat_id={chat_id}, len={}", content.len());
 
     rt_handle.spawn(async move {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let app_handle = app.clone();
 
-        // Spawn event forwarder first
         let fwd = tokio::spawn(async move {
             use rayclaw::agent_engine::AgentEvent;
             while let Some(event) = rx.recv().await {
@@ -446,30 +483,37 @@ pub async fn send_message(
             }
         });
 
-        // Run agent — sends events via tx, drops tx when done
-        debug!("send_message: starting agent processing for chat_id={chat_id}");
-        let result = agent.process_message_stream(chat_id, &content, tx).await;
+        // Store user message (we're using AppState directly, not SDK)
+        store_user_message(&state, chat_id, &content);
 
-        // Store bot response in messages table (SDK stores user msg but not bot response)
+        // Run agent
+        debug!("send_message: starting agent for chat_id={chat_id}");
+        let context = rayclaw::agent_engine::AgentRequestContext {
+            caller_channel: "desktop",
+            chat_id,
+            chat_type: "private",
+        };
+        let result = rayclaw::agent_engine::process_with_agent_with_events(
+            &state,
+            context,
+            Some(&content),
+            None,
+            Some(&tx),
+        )
+        .await;
+        // Drop tx so the forwarder finishes
+        drop(tx);
+
         match &result {
-            Ok(text) => info!("send_message: agent responded, len={}", text.len()),
+            Ok(text) => {
+                info!("send_message: response len={}", text.len());
+                if !text.is_empty() {
+                    store_bot_message(&state, chat_id, text);
+                }
+            }
             Err(e) => error!("send_message: agent error: {e}"),
         }
-        if let Ok(ref response_text) = result {
-            if !response_text.is_empty() {
-                let bot_msg = rayclaw::db::StoredMessage {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    chat_id,
-                    sender_name: "rayclaw".to_string(),
-                    content: response_text.clone(),
-                    is_from_bot: true,
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                };
-                let _ = agent.state().db.store_message(&bot_msg);
-            }
-        }
 
-        // Wait for forwarder to drain all events
         let _ = fwd.await;
     });
 
@@ -482,10 +526,11 @@ pub async fn get_history(
     chat_id: i64,
     limit: Option<usize>,
 ) -> Result<Vec<StoredMessageDto>, String> {
-    let state = app.state::<DesktopState>();
-    let agent = require_agent(&state).await?;
-    let messages = agent
-        .get_messages(chat_id, limit.unwrap_or(100))
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let messages = state
+        .db
+        .get_recent_messages(chat_id, limit.unwrap_or(100))
         .map_err(|e| e.to_string())?;
 
     Ok(messages
@@ -503,13 +548,9 @@ pub async fn get_history(
 
 #[tauri::command]
 pub async fn get_chats(app: tauri::AppHandle) -> Result<Vec<ChatSummaryDto>, String> {
-    let state = app.state::<DesktopState>();
-    let agent = require_agent(&state).await?;
-    let chats = agent
-        .state()
-        .db
-        .get_recent_chats(50)
-        .map_err(|e| e.to_string())?;
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let chats = state.db.get_recent_chats(50).map_err(|e| e.to_string())?;
 
     Ok(chats
         .into_iter()
@@ -525,21 +566,20 @@ pub async fn get_chats(app: tauri::AppHandle) -> Result<Vec<ChatSummaryDto>, Str
 
 #[tauri::command]
 pub async fn reset_session(app: tauri::AppHandle, chat_id: i64) -> Result<(), String> {
-    let state = app.state::<DesktopState>();
-    let agent = require_agent(&state).await?;
-    agent.reset_session(chat_id).map_err(|e| e.to_string())
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    state.db.delete_session(chat_id).map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn new_chat(app: tauri::AppHandle) -> Result<i64, String> {
-    let state = app.state::<DesktopState>();
-    let agent = require_agent(&state).await?;
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
     let chat_id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
-    agent
-        .state()
+    state
         .db
         .upsert_chat(chat_id, Some("New Chat"), "private")
         .map_err(|e| e.to_string())?;
