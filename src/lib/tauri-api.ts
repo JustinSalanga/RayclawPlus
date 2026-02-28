@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppStatus, ConfigDto, ChatSummary, StoredMessage, AgentStreamEvent } from "../types";
+import type { AppStatus, ConfigDto, ChatSummary, StoredMessage, AgentStreamEvent, ChannelStatus } from "../types";
 
 export async function getStatus(): Promise<AppStatus> {
   return invoke("get_status");
@@ -12,6 +12,10 @@ export async function getConfig(): Promise<ConfigDto> {
 
 export async function saveConfig(config: ConfigDto): Promise<void> {
   return invoke("save_config", { config });
+}
+
+export async function getChannelStatus(): Promise<ChannelStatus[]> {
+  return invoke("get_channel_status");
 }
 
 export async function sendMessage(chatId: number, content: string): Promise<void> {

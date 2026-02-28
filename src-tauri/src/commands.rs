@@ -206,7 +206,7 @@ fn apply_channel_secret(
 
 /// Store a user message in the database (since we use AppState directly, not SDK).
 fn store_user_message(state: &AppState, chat_id: i64, text: &str) {
-    let _ = state.db.upsert_chat(chat_id, None, "private");
+    let _ = state.db.upsert_chat(chat_id, None, "desktop");
     let msg = rayclaw::db::StoredMessage {
         id: uuid::Uuid::new_v4().to_string(),
         chat_id,
@@ -393,10 +393,10 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
     let desktop = app.state::<DesktopState>();
     {
         let mut handles = desktop.channel_handles.lock().unwrap();
-        for h in handles.drain(..) {
+        for (name, h) in handles.drain() {
             h.abort();
+            info!("save_config: aborted channel task: {name}");
         }
-        info!("save_config: aborted old channel tasks");
     }
 
     // Reinitialize agent + channels on stored runtime
@@ -432,6 +432,64 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
 
     info!("save_config: complete");
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Commands: Channel Status
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChannelStatusDto {
+    pub name: String,
+    pub configured: bool,
+    pub running: bool,
+}
+
+#[tauri::command]
+pub async fn get_channel_status(app: tauri::AppHandle) -> Result<Vec<ChannelStatusDto>, String> {
+    let desktop = app.state::<DesktopState>();
+    let config = rayclaw::config::Config::load().unwrap_or_else(|_| default_config());
+    let handles = desktop.channel_handles.lock().unwrap();
+
+    let channels = vec![
+        (
+            "telegram",
+            !config.telegram_bot_token.trim().is_empty(),
+        ),
+        (
+            "discord",
+            config
+                .discord_bot_token
+                .as_ref()
+                .map(|t| !t.trim().is_empty())
+                .unwrap_or(false),
+        ),
+        (
+            "slack",
+            channel_str(&config.channels, "slack", "bot_token").is_some()
+                && channel_str(&config.channels, "slack", "app_token").is_some(),
+        ),
+        (
+            "feishu",
+            channel_str(&config.channels, "feishu", "app_id").is_some()
+                && channel_str(&config.channels, "feishu", "app_secret").is_some(),
+        ),
+    ];
+
+    Ok(channels
+        .into_iter()
+        .map(|(name, configured)| {
+            let running = handles
+                .get(name)
+                .map(|h| !h.is_finished())
+                .unwrap_or(false);
+            ChannelStatusDto {
+                name: name.to_string(),
+                configured,
+                running,
+            }
+        })
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -581,7 +639,7 @@ pub async fn new_chat(app: tauri::AppHandle) -> Result<i64, String> {
         .as_secs() as i64;
     state
         .db
-        .upsert_chat(chat_id, Some("New Chat"), "private")
+        .upsert_chat(chat_id, Some("New Chat"), "desktop")
         .map_err(|e| e.to_string())?;
     Ok(chat_id)
 }

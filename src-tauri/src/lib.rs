@@ -238,12 +238,12 @@ fn register_channels(config: &Config, registry: &mut ChannelRegistry) {
     }
 }
 
-/// Spawn channel adapter tasks on the given runtime. Returns handles for cleanup.
+/// Spawn channel adapter tasks on the given runtime. Returns named handles for cleanup.
 pub(crate) fn start_channels(
     state: &Arc<AppState>,
     rt: &tokio::runtime::Handle,
-) -> Vec<tokio::task::JoinHandle<()>> {
-    let mut handles = Vec::new();
+) -> std::collections::HashMap<String, tokio::task::JoinHandle<()>> {
+    let mut handles = std::collections::HashMap::new();
     let config = &state.config;
 
     // Telegram
@@ -254,7 +254,7 @@ pub(crate) fn start_channels(
             let s = state.clone();
             let bot = teloxide::Bot::new(&tg_cfg.bot_token);
             info!("Starting Telegram bot");
-            handles.push(rt.spawn(async move {
+            handles.insert("telegram".into(), rt.spawn(async move {
                 if let Err(e) = rayclaw::telegram::start_telegram_bot(s, bot).await {
                     error!("Telegram bot exited: {e}");
                 }
@@ -270,7 +270,7 @@ pub(crate) fn start_channels(
             let s = state.clone();
             let token = dc_cfg.bot_token.clone();
             info!("Starting Discord bot");
-            handles.push(rt.spawn(async move {
+            handles.insert("discord".into(), rt.spawn(async move {
                 rayclaw::discord::start_discord_bot(s, &token).await;
             }));
         }
@@ -283,7 +283,7 @@ pub(crate) fn start_channels(
         if !slack_cfg.bot_token.trim().is_empty() && !slack_cfg.app_token.trim().is_empty() {
             let s = state.clone();
             info!("Starting Slack bot (Socket Mode)");
-            handles.push(rt.spawn(async move {
+            handles.insert("slack".into(), rt.spawn(async move {
                 rayclaw::channels::slack::start_slack_bot(s).await;
             }));
         }
@@ -297,7 +297,7 @@ pub(crate) fn start_channels(
             let s = state.clone();
             info!("Starting Feishu bot (domain={}, mode={})",
                 feishu_cfg.domain, feishu_cfg.connection_mode);
-            handles.push(rt.spawn(async move {
+            handles.insert("feishu".into(), rt.spawn(async move {
                 rayclaw::channels::feishu::start_feishu_bot(s).await;
             }));
         }
@@ -340,13 +340,13 @@ pub fn run() {
                             }
                             Err(e) => {
                                 error!("Agent init failed: {e}");
-                                (None, Some(e), Vec::new())
+                                (None, Some(e), std::collections::HashMap::new())
                             }
                         }
                     }
                     Err(e) => {
                         info!("No config found ({e}) — showing setup screen");
-                        (None, None, Vec::new())
+                        (None, None, std::collections::HashMap::new())
                     }
                 }
             });
@@ -365,6 +365,7 @@ pub fn run() {
             commands::get_status,
             commands::get_config,
             commands::save_config,
+            commands::get_channel_status,
             commands::send_message,
             commands::get_history,
             commands::get_chats,

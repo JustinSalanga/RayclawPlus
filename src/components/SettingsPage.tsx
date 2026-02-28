@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
-import { getConfig, saveConfig } from "../lib/tauri-api";
-import type { ConfigDto } from "../types";
+import { useState, useEffect, useCallback } from "react";
+import { getConfig, saveConfig, getChannelStatus } from "../lib/tauri-api";
+import type { ConfigDto, ChannelStatus } from "../types";
 
 const PROVIDERS = [
   "anthropic",
@@ -27,10 +27,18 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [channelStatuses, setChannelStatuses] = useState<ChannelStatus[]>([]);
+
+  const fetchStatuses = useCallback(() => {
+    getChannelStatus().then(setChannelStatuses).catch(() => {});
+  }, []);
 
   useEffect(() => {
     getConfig().then(setConfig);
-  }, []);
+    fetchStatuses();
+    const interval = setInterval(fetchStatuses, 5000);
+    return () => clearInterval(interval);
+  }, [fetchStatuses]);
 
   const update = <K extends keyof ConfigDto>(key: K, value: ConfigDto[K]) => {
     setConfig((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -47,6 +55,8 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
       await saveConfig(config);
       setSuccess(true);
       onSaved();
+      // Refresh statuses after reinit
+      setTimeout(fetchStatuses, 1000);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -61,6 +71,8 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
       </main>
     );
   }
+
+  const statusOf = (name: string) => channelStatuses.find((s) => s.name === name);
 
   const isBedrock = config.llm_provider === "bedrock";
   const hasTelegram = !!config.telegram_bot_token;
@@ -204,7 +216,11 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
           {/* Telegram */}
           <details className="settings-channel" open={hasTelegram}>
-            <summary>Telegram</summary>
+            <summary>
+              Telegram
+              {statusOf("telegram")?.running && <span className="status-pill status-running">Running</span>}
+              {statusOf("telegram")?.configured && !statusOf("telegram")?.running && <span className="status-pill status-stopped">Stopped</span>}
+            </summary>
             <label className="settings-field">
               <span>Bot Token</span>
               <input
@@ -227,7 +243,11 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
           {/* Discord */}
           <details className="settings-channel" open={hasDiscord}>
-            <summary>Discord</summary>
+            <summary>
+              Discord
+              {statusOf("discord")?.running && <span className="status-pill status-running">Running</span>}
+              {statusOf("discord")?.configured && !statusOf("discord")?.running && <span className="status-pill status-stopped">Stopped</span>}
+            </summary>
             <label className="settings-field">
               <span>Bot Token</span>
               <input
@@ -241,7 +261,11 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
           {/* Slack */}
           <details className="settings-channel" open={hasSlack}>
-            <summary>Slack</summary>
+            <summary>
+              Slack
+              {statusOf("slack")?.running && <span className="status-pill status-running">Running</span>}
+              {statusOf("slack")?.configured && !statusOf("slack")?.running && <span className="status-pill status-stopped">Stopped</span>}
+            </summary>
             <label className="settings-field">
               <span>Bot Token</span>
               <input
@@ -264,7 +288,11 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
           {/* Feishu */}
           <details className="settings-channel" open={hasFeishu}>
-            <summary>Feishu / Lark</summary>
+            <summary>
+              Feishu / Lark
+              {statusOf("feishu")?.running && <span className="status-pill status-running">Running</span>}
+              {statusOf("feishu")?.configured && !statusOf("feishu")?.running && <span className="status-pill status-stopped">Stopped</span>}
+            </summary>
             <label className="settings-field">
               <span>App ID</span>
               <input

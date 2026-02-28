@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import MessageBubble from "./MessageBubble";
 import ToolStep from "./ToolStep";
 import { sendMessage, getHistory, onAgentStream } from "../lib/tauri-api";
+import { inferChannel } from "../types";
 import type { StoredMessage, AgentStreamEvent } from "../types";
 
 interface ToolStepData {
@@ -14,9 +15,12 @@ interface ToolStepData {
 
 interface ChatWindowProps {
   chatId: number | null;
+  chatType?: string;
 }
 
-export default function ChatWindow({ chatId }: ChatWindowProps) {
+export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
+  const channel = chatType ? inferChannel(chatType) : "desktop";
+  const isReadOnly = channel !== "desktop";
   const [messages, setMessages] = useState<StoredMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -166,24 +170,30 @@ export default function ChatWindow({ chatId }: ChatWindowProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="chat-input-area">
-        <textarea
-          className="chat-input"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Type a message..."
-          rows={1}
-          disabled={isStreaming}
-        />
-        <button
-          className="btn-send"
-          onClick={handleSend}
-          disabled={!input.trim() || isStreaming}
-        >
-          Send
-        </button>
-      </div>
+      {isReadOnly ? (
+        <div className="chat-readonly-bar">
+          This conversation is from <strong>{channel}</strong>. View only.
+        </div>
+      ) : (
+        <div className="chat-input-area">
+          <textarea
+            className="chat-input"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Type a message..."
+            rows={1}
+            disabled={isStreaming}
+          />
+          <button
+            className="btn-send"
+            onClick={handleSend}
+            disabled={!input.trim() || isStreaming}
+          >
+            Send
+          </button>
+        </div>
+      )}
     </main>
   );
 }

@@ -1,4 +1,5 @@
 import type { ChatSummary } from "../types";
+import { channelLabel } from "../types";
 
 interface SidebarProps {
   chats: ChatSummary[];
@@ -24,22 +25,26 @@ export default function Sidebar({
         </button>
       </div>
       <div className="sidebar-list">
-        {chats.map((chat) => (
-          <div
-            key={chat.chat_id}
-            className={`sidebar-item ${chat.chat_id === activeChatId ? "sidebar-item-active" : ""}`}
-            onClick={() => onSelectChat(chat.chat_id)}
-          >
-            <div className="sidebar-item-title">
-              {chat.chat_title || `Chat ${chat.chat_id}`}
-            </div>
-            {chat.last_message_preview && (
-              <div className="sidebar-item-preview">
-                {chat.last_message_preview.slice(0, 60)}
+        {chats.map((chat) => {
+          const badge = channelLabel(chat.chat_type);
+          return (
+            <div
+              key={chat.chat_id}
+              className={`sidebar-item ${chat.chat_id === activeChatId ? "sidebar-item-active" : ""}`}
+              onClick={() => onSelectChat(chat.chat_id)}
+            >
+              <div className="sidebar-item-title">
+                {badge && <span className="channel-badge">{badge}</span>}
+                {chat.chat_title || `Chat ${chat.chat_id}`}
               </div>
-            )}
-          </div>
-        ))}
+              {chat.last_message_preview && (
+                <div className="sidebar-item-preview">
+                  {chat.last_message_preview.slice(0, 60)}
+                </div>
+              )}
+            </div>
+          );
+        })}
         {chats.length === 0 && (
           <div className="sidebar-empty">No chats yet. Start a new one!</div>
         )}

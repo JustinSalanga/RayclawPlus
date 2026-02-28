@@ -60,6 +60,54 @@ export interface StoredMessage {
   timestamp: string;
 }
 
+export interface ChannelStatus {
+  name: string;
+  configured: boolean;
+  running: boolean;
+}
+
+export function inferChannel(chatType: string): string {
+  switch (chatType) {
+    case "private":
+    case "group":
+    case "supergroup":
+    case "channel":
+      return "telegram";
+    case "discord":
+      return "discord";
+    case "slack":
+    case "slack_dm":
+      return "slack";
+    case "feishu_dm":
+    case "feishu_group":
+      return "feishu";
+    case "web":
+      return "web";
+    case "desktop":
+      return "desktop";
+    default:
+      return "unknown";
+  }
+}
+
+export function channelLabel(chatType: string): string | null {
+  const ch = inferChannel(chatType);
+  switch (ch) {
+    case "telegram":
+      return "TG";
+    case "discord":
+      return "DC";
+    case "slack":
+      return "Slack";
+    case "feishu":
+      return "Feishu";
+    case "web":
+      return "Web";
+    default:
+      return null;
+  }
+}
+
 export type AgentStreamEvent =
   | { type: "iteration"; iteration: number }
   | { type: "tool_start"; name: string }
