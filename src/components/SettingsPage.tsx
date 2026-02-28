@@ -17,14 +17,23 @@ const PROVIDERS = [
   "custom",
 ];
 
-type SettingsTab = "provider" | "channels" | "session" | "paths" | "advanced";
+type SettingsTab =
+  | "provider"
+  | "session"
+  | "paths"
+  | "advanced"
+  | "ch:telegram"
+  | "ch:discord"
+  | "ch:slack"
+  | "ch:feishu"
+  | "ch:web";
 
-const TABS: { key: SettingsTab; label: string }[] = [
-  { key: "provider", label: "AI Provider" },
-  { key: "channels", label: "Channels" },
-  { key: "session", label: "Session" },
-  { key: "paths", label: "Paths" },
-  { key: "advanced", label: "Advanced" },
+const CHANNELS: { key: string; label: string }[] = [
+  { key: "telegram", label: "Telegram" },
+  { key: "discord", label: "Discord" },
+  { key: "slack", label: "Slack" },
+  { key: "feishu", label: "Feishu / Lark" },
+  { key: "web", label: "Web UI" },
 ];
 
 interface SettingsPageProps {
@@ -39,6 +48,7 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   const [success, setSuccess] = useState(false);
   const [channelStatuses, setChannelStatuses] = useState<ChannelStatus[]>([]);
   const [activeTab, setActiveTab] = useState<SettingsTab>("provider");
+  const [channelsOpen, setChannelsOpen] = useState(false);
 
   const fetchStatuses = useCallback(() => {
     getChannelStatus().then(setChannelStatuses).catch(() => {});
@@ -94,9 +104,39 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   };
 
   const isBedrock = config.llm_provider === "bedrock";
-
-  // Count running channels for badge
+  const isChannelTab = activeTab.startsWith("ch:");
   const runningCount = channelStatuses.filter((s) => s.running).length;
+
+  const selectTab = (tab: SettingsTab) => {
+    setActiveTab(tab);
+    // Collapse channels section when navigating away
+    if (!tab.startsWith("ch:") && tab !== "provider") {
+      // keep channels open state as-is
+    }
+  };
+
+  const toggleChannelsOpen = () => {
+    if (channelsOpen) {
+      setChannelsOpen(false);
+    } else {
+      setChannelsOpen(true);
+      // Select first channel
+      setActiveTab("ch:telegram");
+    }
+  };
+
+  const selectChannel = (key: string) => {
+    setActiveTab(`ch:${key}` as SettingsTab);
+    setChannelsOpen(true);
+  };
+
+  // Status dot helper
+  const StatusDot = ({ name }: { name: string }) => {
+    const st = statusOf(name);
+    if (st?.running) return <span className="nav-dot nav-dot-running" />;
+    if (st?.configured) return <span className="nav-dot nav-dot-stopped" />;
+    return null;
+  };
 
   return (
     <main className="settings-page">
@@ -117,18 +157,57 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
       <div className="settings-split">
         {/* Left nav */}
         <nav className="settings-nav">
-          {TABS.map((tab) => (
-            <button
-              key={tab.key}
-              className={`settings-nav-item ${activeTab === tab.key ? "settings-nav-active" : ""}`}
-              onClick={() => setActiveTab(tab.key)}
-            >
-              {tab.label}
-              {tab.key === "channels" && runningCount > 0 && (
-                <span className="nav-badge">{runningCount}</span>
-              )}
-            </button>
-          ))}
+          <button
+            className={`settings-nav-item ${activeTab === "provider" ? "settings-nav-active" : ""}`}
+            onClick={() => selectTab("provider")}
+          >
+            AI Provider
+          </button>
+
+          {/* Channels group */}
+          <button
+            className={`settings-nav-item settings-nav-group ${isChannelTab ? "settings-nav-active" : ""}`}
+            onClick={toggleChannelsOpen}
+          >
+            <span>Channels</span>
+            <span className="nav-group-right">
+              {runningCount > 0 && <span className="nav-badge">{runningCount}</span>}
+              <span className={`nav-arrow ${channelsOpen ? "nav-arrow-open" : ""}`}>&#9654;</span>
+            </span>
+          </button>
+          {channelsOpen && (
+            <div className="settings-nav-children">
+              {CHANNELS.map((ch) => (
+                <button
+                  key={ch.key}
+                  className={`settings-nav-item settings-nav-child ${activeTab === `ch:${ch.key}` ? "settings-nav-active" : ""}`}
+                  onClick={() => selectChannel(ch.key)}
+                >
+                  <StatusDot name={ch.key} />
+                  {ch.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <button
+            className={`settings-nav-item ${activeTab === "session" ? "settings-nav-active" : ""}`}
+            onClick={() => selectTab("session")}
+          >
+            Session
+          </button>
+          <button
+            className={`settings-nav-item ${activeTab === "paths" ? "settings-nav-active" : ""}`}
+            onClick={() => selectTab("paths")}
+          >
+            Paths
+          </button>
+          <button
+            className={`settings-nav-item ${activeTab === "advanced" ? "settings-nav-active" : ""}`}
+            onClick={() => selectTab("advanced")}
+          >
+            Advanced
+          </button>
         </nav>
 
         {/* Right panel */}
@@ -145,9 +224,7 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                   onChange={(e) => update("llm_provider", e.target.value)}
                 >
                   {PROVIDERS.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
+                    <option key={p} value={p}>{p}</option>
                   ))}
                 </select>
               </label>
@@ -201,7 +278,6 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                 />
               </label>
 
-              {/* AWS Bedrock (inline when provider=bedrock) */}
               {isBedrock && (
                 <>
                   <div className="settings-divider" />
@@ -249,28 +325,16 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
             </div>
           )}
 
-          {/* Channels */}
-          {activeTab === "channels" && (
+          {/* Telegram */}
+          {activeTab === "ch:telegram" && (
             <div className="settings-panel-content">
-              <h2>Channels</h2>
-              <p className="settings-hint">
-                Configure messaging channels. Toggle the switch to start or stop a channel.
-              </p>
-
-              {/* Telegram */}
-              <div className="channel-card">
-                <div className="channel-card-header">
-                  <div className="channel-card-info">
-                    <span className="channel-card-name">Telegram</span>
-                    {statusOf("telegram")?.running && (
-                      <span className="status-pill status-running">Running</span>
-                    )}
-                    {statusOf("telegram")?.configured && !statusOf("telegram")?.running && (
-                      <span className="status-pill status-stopped">Stopped</span>
-                    )}
-                  </div>
+              <div className="channel-panel-header">
+                <h2>Telegram</h2>
+                <div className="channel-panel-status">
+                  {statusOf("telegram")?.running && <span className="status-pill status-running">Running</span>}
+                  {statusOf("telegram")?.configured && !statusOf("telegram")?.running && <span className="status-pill status-stopped">Stopped</span>}
                   {statusOf("telegram")?.configured && (
-                    <label className="channel-switch" onClick={(e) => e.stopPropagation()}>
+                    <label className="channel-switch">
                       <input
                         type="checkbox"
                         checked={statusOf("telegram")?.enabled ?? true}
@@ -280,42 +344,39 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                     </label>
                   )}
                 </div>
-                <div className="channel-card-body">
-                  <label className="settings-field">
-                    <span>Bot Token</span>
-                    <input
-                      type="password"
-                      value={config.telegram_bot_token}
-                      onChange={(e) => update("telegram_bot_token", e.target.value)}
-                      placeholder="123456:ABC-DEF..."
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Bot Username</span>
-                    <input
-                      type="text"
-                      value={config.bot_username}
-                      onChange={(e) => update("bot_username", e.target.value)}
-                      placeholder="my_bot"
-                    />
-                  </label>
-                </div>
               </div>
 
-              {/* Discord */}
-              <div className="channel-card">
-                <div className="channel-card-header">
-                  <div className="channel-card-info">
-                    <span className="channel-card-name">Discord</span>
-                    {statusOf("discord")?.running && (
-                      <span className="status-pill status-running">Running</span>
-                    )}
-                    {statusOf("discord")?.configured && !statusOf("discord")?.running && (
-                      <span className="status-pill status-stopped">Stopped</span>
-                    )}
-                  </div>
+              <label className="settings-field">
+                <span>Bot Token</span>
+                <input
+                  type="password"
+                  value={config.telegram_bot_token}
+                  onChange={(e) => update("telegram_bot_token", e.target.value)}
+                  placeholder="123456:ABC-DEF..."
+                />
+              </label>
+              <label className="settings-field">
+                <span>Bot Username</span>
+                <input
+                  type="text"
+                  value={config.bot_username}
+                  onChange={(e) => update("bot_username", e.target.value)}
+                  placeholder="my_bot"
+                />
+              </label>
+            </div>
+          )}
+
+          {/* Discord */}
+          {activeTab === "ch:discord" && (
+            <div className="settings-panel-content">
+              <div className="channel-panel-header">
+                <h2>Discord</h2>
+                <div className="channel-panel-status">
+                  {statusOf("discord")?.running && <span className="status-pill status-running">Running</span>}
+                  {statusOf("discord")?.configured && !statusOf("discord")?.running && <span className="status-pill status-stopped">Stopped</span>}
                   {statusOf("discord")?.configured && (
-                    <label className="channel-switch" onClick={(e) => e.stopPropagation()}>
+                    <label className="channel-switch">
                       <input
                         type="checkbox"
                         checked={statusOf("discord")?.enabled ?? true}
@@ -325,33 +386,30 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                     </label>
                   )}
                 </div>
-                <div className="channel-card-body">
-                  <label className="settings-field">
-                    <span>Bot Token</span>
-                    <input
-                      type="password"
-                      value={config.discord_bot_token ?? ""}
-                      onChange={(e) => update("discord_bot_token", e.target.value || null)}
-                      placeholder="Discord bot token"
-                    />
-                  </label>
-                </div>
               </div>
 
-              {/* Slack */}
-              <div className="channel-card">
-                <div className="channel-card-header">
-                  <div className="channel-card-info">
-                    <span className="channel-card-name">Slack</span>
-                    {statusOf("slack")?.running && (
-                      <span className="status-pill status-running">Running</span>
-                    )}
-                    {statusOf("slack")?.configured && !statusOf("slack")?.running && (
-                      <span className="status-pill status-stopped">Stopped</span>
-                    )}
-                  </div>
+              <label className="settings-field">
+                <span>Bot Token</span>
+                <input
+                  type="password"
+                  value={config.discord_bot_token ?? ""}
+                  onChange={(e) => update("discord_bot_token", e.target.value || null)}
+                  placeholder="Discord bot token"
+                />
+              </label>
+            </div>
+          )}
+
+          {/* Slack */}
+          {activeTab === "ch:slack" && (
+            <div className="settings-panel-content">
+              <div className="channel-panel-header">
+                <h2>Slack</h2>
+                <div className="channel-panel-status">
+                  {statusOf("slack")?.running && <span className="status-pill status-running">Running</span>}
+                  {statusOf("slack")?.configured && !statusOf("slack")?.running && <span className="status-pill status-stopped">Stopped</span>}
                   {statusOf("slack")?.configured && (
-                    <label className="channel-switch" onClick={(e) => e.stopPropagation()}>
+                    <label className="channel-switch">
                       <input
                         type="checkbox"
                         checked={statusOf("slack")?.enabled ?? true}
@@ -361,42 +419,39 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                     </label>
                   )}
                 </div>
-                <div className="channel-card-body">
-                  <label className="settings-field">
-                    <span>Bot Token</span>
-                    <input
-                      type="password"
-                      value={config.slack_bot_token ?? ""}
-                      onChange={(e) => update("slack_bot_token", e.target.value || null)}
-                      placeholder="xoxb-..."
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>App Token</span>
-                    <input
-                      type="password"
-                      value={config.slack_app_token ?? ""}
-                      onChange={(e) => update("slack_app_token", e.target.value || null)}
-                      placeholder="xapp-..."
-                    />
-                  </label>
-                </div>
               </div>
 
-              {/* Feishu */}
-              <div className="channel-card">
-                <div className="channel-card-header">
-                  <div className="channel-card-info">
-                    <span className="channel-card-name">Feishu / Lark</span>
-                    {statusOf("feishu")?.running && (
-                      <span className="status-pill status-running">Running</span>
-                    )}
-                    {statusOf("feishu")?.configured && !statusOf("feishu")?.running && (
-                      <span className="status-pill status-stopped">Stopped</span>
-                    )}
-                  </div>
+              <label className="settings-field">
+                <span>Bot Token</span>
+                <input
+                  type="password"
+                  value={config.slack_bot_token ?? ""}
+                  onChange={(e) => update("slack_bot_token", e.target.value || null)}
+                  placeholder="xoxb-..."
+                />
+              </label>
+              <label className="settings-field">
+                <span>App Token</span>
+                <input
+                  type="password"
+                  value={config.slack_app_token ?? ""}
+                  onChange={(e) => update("slack_app_token", e.target.value || null)}
+                  placeholder="xapp-..."
+                />
+              </label>
+            </div>
+          )}
+
+          {/* Feishu */}
+          {activeTab === "ch:feishu" && (
+            <div className="settings-panel-content">
+              <div className="channel-panel-header">
+                <h2>Feishu / Lark</h2>
+                <div className="channel-panel-status">
+                  {statusOf("feishu")?.running && <span className="status-pill status-running">Running</span>}
+                  {statusOf("feishu")?.configured && !statusOf("feishu")?.running && <span className="status-pill status-stopped">Stopped</span>}
                   {statusOf("feishu")?.configured && (
-                    <label className="channel-switch" onClick={(e) => e.stopPropagation()}>
+                    <label className="channel-switch">
                       <input
                         type="checkbox"
                         checked={statusOf("feishu")?.enabled ?? true}
@@ -406,34 +461,35 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                     </label>
                   )}
                 </div>
-                <div className="channel-card-body">
-                  <label className="settings-field">
-                    <span>App ID</span>
-                    <input
-                      type="text"
-                      value={config.feishu_app_id ?? ""}
-                      onChange={(e) => update("feishu_app_id", e.target.value || null)}
-                      placeholder="cli_xxx"
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>App Secret</span>
-                    <input
-                      type="password"
-                      value={config.feishu_app_secret ?? ""}
-                      onChange={(e) => update("feishu_app_secret", e.target.value || null)}
-                    />
-                  </label>
-                </div>
               </div>
 
-              {/* Web UI */}
-              <div className="channel-card">
-                <div className="channel-card-header">
-                  <div className="channel-card-info">
-                    <span className="channel-card-name">Web UI</span>
-                  </div>
-                  <label className="channel-switch" onClick={(e) => e.stopPropagation()}>
+              <label className="settings-field">
+                <span>App ID</span>
+                <input
+                  type="text"
+                  value={config.feishu_app_id ?? ""}
+                  onChange={(e) => update("feishu_app_id", e.target.value || null)}
+                  placeholder="cli_xxx"
+                />
+              </label>
+              <label className="settings-field">
+                <span>App Secret</span>
+                <input
+                  type="password"
+                  value={config.feishu_app_secret ?? ""}
+                  onChange={(e) => update("feishu_app_secret", e.target.value || null)}
+                />
+              </label>
+            </div>
+          )}
+
+          {/* Web UI */}
+          {activeTab === "ch:web" && (
+            <div className="settings-panel-content">
+              <div className="channel-panel-header">
+                <h2>Web UI</h2>
+                <div className="channel-panel-status">
+                  <label className="channel-switch">
                     <input
                       type="checkbox"
                       checked={config.web_enabled}
@@ -443,6 +499,9 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                   </label>
                 </div>
               </div>
+              <p className="settings-hint">
+                Enable the built-in Web UI served by the agent at runtime.
+              </p>
             </div>
           )}
 
@@ -456,9 +515,7 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                 <input
                   type="number"
                   value={config.max_tool_iterations}
-                  onChange={(e) =>
-                    update("max_tool_iterations", Number(e.target.value) || 100)
-                  }
+                  onChange={(e) => update("max_tool_iterations", Number(e.target.value) || 100)}
                   min={1}
                 />
               </label>
@@ -468,9 +525,7 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                 <input
                   type="number"
                   value={config.max_history_messages}
-                  onChange={(e) =>
-                    update("max_history_messages", Number(e.target.value) || 50)
-                  }
+                  onChange={(e) => update("max_history_messages", Number(e.target.value) || 50)}
                   min={1}
                 />
               </label>
@@ -480,9 +535,7 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                 <input
                   type="number"
                   value={config.max_session_messages}
-                  onChange={(e) =>
-                    update("max_session_messages", Number(e.target.value) || 40)
-                  }
+                  onChange={(e) => update("max_session_messages", Number(e.target.value) || 40)}
                   min={1}
                 />
               </label>
@@ -552,9 +605,7 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                 <input
                   type="number"
                   value={config.memory_token_budget}
-                  onChange={(e) =>
-                    update("memory_token_budget", Number(e.target.value) || 1500)
-                  }
+                  onChange={(e) => update("memory_token_budget", Number(e.target.value) || 1500)}
                   min={1}
                 />
               </label>

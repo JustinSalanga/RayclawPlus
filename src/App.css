@@ -691,6 +691,74 @@ body {
   line-height: 1.4;
 }
 
+/* Channels group with arrow */
+.settings-nav-group {
+  justify-content: space-between;
+}
+
+.nav-group-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nav-arrow {
+  font-size: 9px;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+
+.nav-arrow-open {
+  transform: rotate(90deg);
+}
+
+/* Channel sub-items */
+.settings-nav-children {
+  padding: 2px 0;
+}
+
+.settings-nav-child {
+  padding-left: 28px !important;
+  font-size: 12px !important;
+  gap: 6px;
+  justify-content: flex-start !important;
+}
+
+/* Status dots in nav */
+.nav-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.nav-dot-running {
+  background: #28a745;
+}
+
+.nav-dot-stopped {
+  background: var(--muted);
+}
+
+/* Channel panel header (title + status + toggle) */
+.channel-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.channel-panel-header h2 {
+  margin-bottom: 0;
+}
+
+.channel-panel-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 /* Right panel */
 .settings-panel {
   flex: 1;
@@ -780,42 +848,6 @@ body {
   height: 18px;
   accent-color: var(--accent);
   cursor: pointer;
-}
-
-/* Channel cards */
-.channel-card {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  margin-bottom: 10px;
-  overflow: hidden;
-}
-
-.channel-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  background: var(--paper-warm);
-}
-
-.channel-card-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.channel-card-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--charcoal);
-}
-
-.channel-card-body {
-  padding: 14px 16px 6px;
-}
-
-.channel-card-body .settings-field > span {
-  min-width: 120px;
 }
 
 /* Save button + status in header */
