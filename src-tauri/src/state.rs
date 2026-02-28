@@ -5,4 +5,5 @@ use tokio::sync::RwLock;
 pub struct DesktopState {
     pub agent: RwLock<Option<Arc<RayClawAgent>>>,
     pub init_error: RwLock<Option<String>>,
+    pub runtime: tokio::runtime::Runtime,
 }

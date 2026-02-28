@@ -2,18 +2,26 @@ import { useState, useEffect, useCallback } from "react";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
 import SetupScreen from "./components/SetupScreen";
+import SettingsPage from "./components/SettingsPage";
 import { getStatus, getChats, newChat } from "./lib/tauri-api";
 import type { AppStatus, ChatSummary } from "./types";
 import "./App.css";
 
+type View = "chat" | "settings";
+
 function App() {
   const [status, setStatus] = useState<AppStatus | null>(null);
+  const [view, setView] = useState<View>("chat");
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [activeChatId, setActiveChatId] = useState<number | null>(null);
 
-  useEffect(() => {
+  const refreshStatus = useCallback(() => {
     getStatus().then(setStatus);
   }, []);
+
+  useEffect(() => {
+    refreshStatus();
+  }, [refreshStatus]);
 
   const loadChats = useCallback(async () => {
     if (!status?.ready) return;
@@ -35,6 +43,10 @@ function App() {
     setActiveChatId(chatId);
   };
 
+  const handleSettingsSaved = () => {
+    refreshStatus();
+  };
+
   // Loading
   if (status === null) {
     return (
@@ -46,9 +58,24 @@ function App() {
     );
   }
 
-  // Not configured
-  if (!status.ready) {
-    return <SetupScreen error={status.error} />;
+  // Not configured — show setup screen (or settings if user clicked Configure)
+  if (!status.ready && view !== "settings") {
+    return (
+      <SetupScreen
+        error={status.error}
+        onConfigure={() => setView("settings")}
+      />
+    );
+  }
+
+  // Settings page (accessible from setup screen or sidebar)
+  if (view === "settings") {
+    return (
+      <SettingsPage
+        onBack={() => setView("chat")}
+        onSaved={handleSettingsSaved}
+      />
+    );
   }
 
   return (
@@ -58,6 +85,7 @@ function App() {
         activeChatId={activeChatId}
         onSelectChat={handleSelectChat}
         onNewChat={handleNewChat}
+        onOpenSettings={() => setView("settings")}
       />
       <ChatWindow chatId={activeChatId} />
     </div>

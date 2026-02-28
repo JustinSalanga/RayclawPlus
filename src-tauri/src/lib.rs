@@ -11,25 +11,29 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+
             let (agent, init_error) = rt.block_on(async {
                 match rayclaw::config::Config::load() {
                     Ok(config) => match rayclaw::sdk::RayClawAgent::new(config).await {
                         Ok(agent) => (Some(std::sync::Arc::new(agent)), None),
                         Err(e) => (None, Some(format!("Failed to initialize agent: {e}"))),
                     },
-                    Err(e) => (None, Some(format!("{e}"))),
+                    Err(_) => (None, None), // No config yet — not an error, just needs setup
                 }
             });
 
             app.manage(DesktopState {
                 agent: RwLock::new(agent),
                 init_error: RwLock::new(init_error),
+                runtime: rt,
             });
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_status,
+            commands::get_config,
+            commands::save_config,
             commands::send_message,
             commands::get_history,
             commands::get_chats,

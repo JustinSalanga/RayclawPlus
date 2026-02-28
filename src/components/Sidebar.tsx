@@ -5,9 +5,16 @@ interface SidebarProps {
   activeChatId: number | null;
   onSelectChat: (chatId: number) => void;
   onNewChat: () => void;
+  onOpenSettings: () => void;
 }
 
-export default function Sidebar({ chats, activeChatId, onSelectChat, onNewChat }: SidebarProps) {
+export default function Sidebar({
+  chats,
+  activeChatId,
+  onSelectChat,
+  onNewChat,
+  onOpenSettings,
+}: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -36,6 +43,11 @@ export default function Sidebar({ chats, activeChatId, onSelectChat, onNewChat }
         {chats.length === 0 && (
           <div className="sidebar-empty">No chats yet. Start a new one!</div>
         )}
+      </div>
+      <div className="sidebar-footer">
+        <button className="btn-settings" onClick={onOpenSettings}>
+          Settings
+        </button>
       </div>
     </aside>
   );
