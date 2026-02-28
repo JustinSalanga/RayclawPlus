@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ChatSummary, StoredMessage, AgentStreamEvent } from "../types";
+import type { AppStatus, ChatSummary, StoredMessage, AgentStreamEvent } from "../types";
+
+export async function getStatus(): Promise<AppStatus> {
+  return invoke("get_status");
+}
 
 export async function sendMessage(chatId: number, content: string): Promise<void> {
   return invoke("send_message", { chatId, content });

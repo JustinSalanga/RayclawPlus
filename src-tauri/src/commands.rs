@@ -3,6 +3,12 @@ use serde::Serialize;
 use tauri::{Emitter, Manager};
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AppStatus {
+    pub ready: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ChatSummaryDto {
     pub chat_id: i64,
     pub chat_title: Option<String>,
@@ -41,6 +47,29 @@ pub enum AgentStreamPayload {
     FinalResponse { text: String },
 }
 
+/// Helper: get agent or return Err
+fn require_agent(
+    state: &DesktopState,
+) -> Result<std::sync::Arc<rayclaw::sdk::RayClawAgent>, String> {
+    state
+        .agent
+        .try_read()
+        .ok()
+        .and_then(|guard| guard.clone())
+        .ok_or_else(|| "Agent not initialized. Please configure rayclaw first.".to_string())
+}
+
+#[tauri::command]
+pub async fn get_status(app: tauri::AppHandle) -> Result<AppStatus, String> {
+    let state = app.state::<DesktopState>();
+    let agent = state.agent.read().await;
+    let error = state.init_error.read().await;
+    Ok(AppStatus {
+        ready: agent.is_some(),
+        error: error.clone(),
+    })
+}
+
 #[tauri::command]
 pub async fn send_message(
     app: tauri::AppHandle,
@@ -48,7 +77,7 @@ pub async fn send_message(
     content: String,
 ) -> Result<(), String> {
     let state = app.state::<DesktopState>();
-    let agent = state.agent.clone();
+    let agent = require_agent(&state)?;
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -98,8 +127,8 @@ pub async fn get_history(
     limit: Option<usize>,
 ) -> Result<Vec<StoredMessageDto>, String> {
     let state = app.state::<DesktopState>();
-    let messages = state
-        .agent
+    let agent = require_agent(&state)?;
+    let messages = agent
         .get_messages(chat_id, limit.unwrap_or(100))
         .map_err(|e| e.to_string())?;
 
@@ -119,8 +148,8 @@ pub async fn get_history(
 #[tauri::command]
 pub async fn get_chats(app: tauri::AppHandle) -> Result<Vec<ChatSummaryDto>, String> {
     let state = app.state::<DesktopState>();
-    let chats = state
-        .agent
+    let agent = require_agent(&state)?;
+    let chats = agent
         .state()
         .db
         .get_recent_chats(50)
@@ -141,21 +170,19 @@ pub async fn get_chats(app: tauri::AppHandle) -> Result<Vec<ChatSummaryDto>, Str
 #[tauri::command]
 pub async fn reset_session(app: tauri::AppHandle, chat_id: i64) -> Result<(), String> {
     let state = app.state::<DesktopState>();
-    state
-        .agent
-        .reset_session(chat_id)
-        .map_err(|e| e.to_string())
+    let agent = require_agent(&state)?;
+    agent.reset_session(chat_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn new_chat(app: tauri::AppHandle) -> Result<i64, String> {
     let state = app.state::<DesktopState>();
+    let agent = require_agent(&state)?;
     let chat_id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
-    state
-        .agent
+    agent
         .state()
         .db
         .upsert_chat(chat_id, Some("New Chat"), "private")

@@ -1,3 +1,8 @@
+export interface AppStatus {
+  ready: boolean;
+  error: string | null;
+}
+
 export interface ChatSummary {
   chat_id: number;
   chat_title: string | null;

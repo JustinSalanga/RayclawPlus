@@ -2,8 +2,8 @@ mod commands;
 mod state;
 
 use state::DesktopState;
-use std::sync::Arc;
 use tauri::Manager;
+use tokio::sync::RwLock;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,21 +11,25 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-            let agent = rt.block_on(async {
-                let config = rayclaw::config::Config::load()
-                    .expect("failed to load rayclaw config — run `rayclaw setup` first");
-                rayclaw::sdk::RayClawAgent::new(config)
-                    .await
-                    .expect("failed to initialize RayClaw agent")
+            let (agent, init_error) = rt.block_on(async {
+                match rayclaw::config::Config::load() {
+                    Ok(config) => match rayclaw::sdk::RayClawAgent::new(config).await {
+                        Ok(agent) => (Some(std::sync::Arc::new(agent)), None),
+                        Err(e) => (None, Some(format!("Failed to initialize agent: {e}"))),
+                    },
+                    Err(e) => (None, Some(format!("{e}"))),
+                }
             });
 
             app.manage(DesktopState {
-                agent: Arc::new(agent),
+                agent: RwLock::new(agent),
+                init_error: RwLock::new(init_error),
             });
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::get_status,
             commands::send_message,
             commands::get_history,
             commands::get_chats,
