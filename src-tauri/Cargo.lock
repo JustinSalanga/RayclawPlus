@@ -3387,6 +3387,7 @@ dependencies = [
 name = "rayclaw-desktop"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "rayclaw",
  "serde",
  "serde_json",
@@ -3395,6 +3396,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-opener",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

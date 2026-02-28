@@ -59,15 +59,24 @@ export default function ChatWindow({ chatId }: ChatWindowProps) {
           );
           break;
         case "final_response":
-          setIsStreaming(false);
-          setStreamingText("");
           setToolSteps([]);
-          // Reload history to get the persisted messages
+          // Reload history to get the persisted messages, then clear streaming
           if (chatId !== null) {
-            getHistory(chatId).then((msgs) => {
-              setMessages(msgs);
-              setTimeout(scrollToBottom, 50);
-            });
+            // Small delay to let the backend persist the bot response
+            setTimeout(() => {
+              getHistory(chatId).then((msgs) => {
+                setMessages(msgs);
+                setStreamingText("");
+                setIsStreaming(false);
+                setTimeout(scrollToBottom, 50);
+              }).catch(() => {
+                // If history reload fails, keep the streaming text as a fallback
+                setIsStreaming(false);
+              });
+            }, 300);
+          } else {
+            setStreamingText("");
+            setIsStreaming(false);
           }
           break;
       }

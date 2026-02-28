@@ -28,6 +28,19 @@ export interface ConfigDto {
   soul_path: string | null;
   memory_token_budget: number;
   reflector_enabled: boolean;
+  // Channels — Telegram
+  telegram_bot_token: string;
+  bot_username: string;
+  // Channels — Discord
+  discord_bot_token: string | null;
+  // Channels — Slack
+  slack_bot_token: string | null;
+  slack_app_token: string | null;
+  // Channels — Feishu
+  feishu_app_id: string | null;
+  feishu_app_secret: string | null;
+  // Channels — Web
+  web_enabled: boolean;
 }
 
 export interface ChatSummary {

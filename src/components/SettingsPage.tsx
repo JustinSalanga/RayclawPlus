@@ -63,12 +63,16 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   }
 
   const isBedrock = config.llm_provider === "bedrock";
+  const hasTelegram = !!config.telegram_bot_token;
+  const hasDiscord = !!config.discord_bot_token;
+  const hasSlack = !!config.slack_bot_token;
+  const hasFeishu = !!config.feishu_app_id;
 
   return (
     <main className="settings-page">
       <div className="settings-header">
         <button className="btn-back" onClick={onBack}>
-          ← Back
+          &larr; Back
         </button>
         <h1>Settings</h1>
       </div>
@@ -192,6 +196,107 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
             </label>
           </section>
         )}
+
+        {/* Channels Section */}
+        <section className="settings-section">
+          <h2>Channels</h2>
+          <p className="settings-hint">Configure messaging channels. Leave empty to disable a channel.</p>
+
+          {/* Telegram */}
+          <details className="settings-channel" open={hasTelegram}>
+            <summary>Telegram</summary>
+            <label className="settings-field">
+              <span>Bot Token</span>
+              <input
+                type="password"
+                value={config.telegram_bot_token}
+                onChange={(e) => update("telegram_bot_token", e.target.value)}
+                placeholder="123456:ABC-DEF..."
+              />
+            </label>
+            <label className="settings-field">
+              <span>Bot Username</span>
+              <input
+                type="text"
+                value={config.bot_username}
+                onChange={(e) => update("bot_username", e.target.value)}
+                placeholder="my_bot"
+              />
+            </label>
+          </details>
+
+          {/* Discord */}
+          <details className="settings-channel" open={hasDiscord}>
+            <summary>Discord</summary>
+            <label className="settings-field">
+              <span>Bot Token</span>
+              <input
+                type="password"
+                value={config.discord_bot_token ?? ""}
+                onChange={(e) => update("discord_bot_token", e.target.value || null)}
+                placeholder="Discord bot token"
+              />
+            </label>
+          </details>
+
+          {/* Slack */}
+          <details className="settings-channel" open={hasSlack}>
+            <summary>Slack</summary>
+            <label className="settings-field">
+              <span>Bot Token</span>
+              <input
+                type="password"
+                value={config.slack_bot_token ?? ""}
+                onChange={(e) => update("slack_bot_token", e.target.value || null)}
+                placeholder="xoxb-..."
+              />
+            </label>
+            <label className="settings-field">
+              <span>App Token</span>
+              <input
+                type="password"
+                value={config.slack_app_token ?? ""}
+                onChange={(e) => update("slack_app_token", e.target.value || null)}
+                placeholder="xapp-..."
+              />
+            </label>
+          </details>
+
+          {/* Feishu */}
+          <details className="settings-channel" open={hasFeishu}>
+            <summary>Feishu / Lark</summary>
+            <label className="settings-field">
+              <span>App ID</span>
+              <input
+                type="text"
+                value={config.feishu_app_id ?? ""}
+                onChange={(e) => update("feishu_app_id", e.target.value || null)}
+                placeholder="cli_xxx"
+              />
+            </label>
+            <label className="settings-field">
+              <span>App Secret</span>
+              <input
+                type="password"
+                value={config.feishu_app_secret ?? ""}
+                onChange={(e) => update("feishu_app_secret", e.target.value || null)}
+              />
+            </label>
+          </details>
+
+          {/* Web UI */}
+          <details className="settings-channel" open={config.web_enabled}>
+            <summary>Web UI</summary>
+            <label className="settings-field settings-toggle">
+              <span>Enable built-in Web UI</span>
+              <input
+                type="checkbox"
+                checked={config.web_enabled}
+                onChange={(e) => update("web_enabled", e.target.checked)}
+              />
+            </label>
+          </details>
+        </section>
 
         {/* Session Section */}
         <section className="settings-section">
