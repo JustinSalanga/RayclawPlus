@@ -110,10 +110,11 @@ fn mask_secret(s: &str) -> String {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn require_agent(state: &DesktopState) -> Result<Arc<rayclaw::sdk::RayClawAgent>, String> {
+async fn require_agent(state: &DesktopState) -> Result<Arc<rayclaw::sdk::RayClawAgent>, String> {
     state
         .agent
-        .blocking_read()
+        .read()
+        .await
         .clone()
         .ok_or_else(|| "Agent not initialized. Please configure in Settings.".to_string())
 }
@@ -141,7 +142,7 @@ pub async fn get_status(app: tauri::AppHandle) -> Result<AppStatus, String> {
 }
 
 #[tauri::command]
-pub async fn get_config(app: tauri::AppHandle) -> Result<ConfigDto, String> {
+pub async fn get_config(_app: tauri::AppHandle) -> Result<ConfigDto, String> {
     // Try loading from file; if not found return defaults
     let config = rayclaw::config::Config::load().unwrap_or_else(|_| default_config());
 
@@ -232,21 +233,23 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
         .save_yaml(&save_path)
         .map_err(|e| format!("Failed to save config: {e}"))?;
 
-    // Reinitialize agent
+    // Reinitialize agent on the stored runtime (separate from Tauri's)
     let state = app.state::<DesktopState>();
-    let new_agent = state
-        .runtime
-        .block_on(async {
+    let rt_handle = state.runtime.handle().clone();
+    let new_agent = rt_handle
+        .spawn(async move {
             rayclaw::sdk::RayClawAgent::new(full_config).await
         })
+        .await
+        .map_err(|e| format!("Task failed: {e}"))?
         .map_err(|e| format!("Failed to initialize agent: {e}"))?;
 
     {
-        let mut agent_lock = state.agent.blocking_write();
+        let mut agent_lock = state.agent.write().await;
         *agent_lock = Some(Arc::new(new_agent));
     }
     {
-        let mut err_lock = state.init_error.blocking_write();
+        let mut err_lock = state.init_error.write().await;
         *err_lock = None;
     }
 
@@ -264,7 +267,7 @@ pub async fn send_message(
     content: String,
 ) -> Result<(), String> {
     let state = app.state::<DesktopState>();
-    let agent = require_agent(&state)?;
+    let agent = require_agent(&state).await?;
     let rt_handle = state.runtime.handle().clone();
 
     rt_handle.spawn(async move {
@@ -318,7 +321,7 @@ pub async fn get_history(
     limit: Option<usize>,
 ) -> Result<Vec<StoredMessageDto>, String> {
     let state = app.state::<DesktopState>();
-    let agent = require_agent(&state)?;
+    let agent = require_agent(&state).await?;
     let messages = agent
         .get_messages(chat_id, limit.unwrap_or(100))
         .map_err(|e| e.to_string())?;
@@ -339,7 +342,7 @@ pub async fn get_history(
 #[tauri::command]
 pub async fn get_chats(app: tauri::AppHandle) -> Result<Vec<ChatSummaryDto>, String> {
     let state = app.state::<DesktopState>();
-    let agent = require_agent(&state)?;
+    let agent = require_agent(&state).await?;
     let chats = agent
         .state()
         .db
@@ -361,14 +364,14 @@ pub async fn get_chats(app: tauri::AppHandle) -> Result<Vec<ChatSummaryDto>, Str
 #[tauri::command]
 pub async fn reset_session(app: tauri::AppHandle, chat_id: i64) -> Result<(), String> {
     let state = app.state::<DesktopState>();
-    let agent = require_agent(&state)?;
+    let agent = require_agent(&state).await?;
     agent.reset_session(chat_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn new_chat(app: tauri::AppHandle) -> Result<i64, String> {
     let state = app.state::<DesktopState>();
-    let agent = require_agent(&state)?;
+    let agent = require_agent(&state).await?;
     let chat_id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

@@ -12,6 +12,14 @@ dist
 dist-ssr
 *.local
 
+# SQLite data files (may be created during dev)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+rayclaw.data/
+src-tauri/rayclaw.data/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
