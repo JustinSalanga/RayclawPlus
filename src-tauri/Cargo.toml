@@ -1,0 +1,21 @@
+[package]
+name = "rayclaw-desktop"
+version = "0.1.0"
+description = "RayClaw Desktop - AI Agent Runtime"
+authors = ["RayClaw"]
+edition = "2021"
+
+[lib]
+name = "rayclaw_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+rayclaw = { path = "/home/ubuntu/rayclaw", default-features = false }
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
