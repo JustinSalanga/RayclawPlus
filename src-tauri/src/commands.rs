@@ -2,6 +2,7 @@ use crate::state::DesktopState;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+use tracing::{debug, error, info};
 
 // ---------------------------------------------------------------------------
 // DTOs
@@ -230,6 +231,7 @@ pub async fn get_config(_app: tauri::AppHandle) -> Result<ConfigDto, String> {
 
 #[tauri::command]
 pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(), String> {
+    info!("save_config: provider={}, model={}", config.llm_provider, config.model);
     let mut full_config = rayclaw::config::Config::load().unwrap_or_else(|_| default_config());
 
     // Apply DTO fields (skip masked secrets — keep existing value if masked)
@@ -302,9 +304,13 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
     full_config.web_enabled = config.web_enabled;
 
     // Validate
+    info!("save_config: validating config...");
     full_config
         .validate_for_sdk()
-        .map_err(|e| format!("Validation failed: {e}"))?;
+        .map_err(|e| {
+            error!("save_config: validation failed: {e}");
+            format!("Validation failed: {e}")
+        })?;
 
     // Save to file
     let save_path = rayclaw::config::Config::resolve_config_path()
@@ -312,11 +318,19 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
         .flatten()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(default_config_path);
+    info!("save_config: saving to {save_path}");
     full_config
         .save_yaml(&save_path)
-        .map_err(|e| format!("Failed to save config: {e}"))?;
+        .map_err(|e| {
+            error!("save_config: failed to save: {e}");
+            format!("Failed to save config: {e}")
+        })?;
+
+    // Log channel diagnostics after save
+    crate::log_channel_diagnostics(&full_config);
 
     // Reinitialize agent on the stored runtime (separate from Tauri's)
+    info!("save_config: reinitializing agent (SDK mode)...");
     let state = app.state::<DesktopState>();
     let rt_handle = state.runtime.handle().clone();
     let new_agent = rt_handle
@@ -324,8 +338,16 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
             rayclaw::sdk::RayClawAgent::new(full_config).await
         })
         .await
-        .map_err(|e| format!("Task failed: {e}"))?
-        .map_err(|e| format!("Failed to initialize agent: {e}"))?;
+        .map_err(|e| {
+            error!("save_config: spawn task failed: {e}");
+            format!("Task failed: {e}")
+        })?
+        .map_err(|e| {
+            error!("save_config: agent init failed: {e}");
+            format!("Failed to initialize agent: {e}")
+        })?;
+
+    info!("save_config: agent reinitialized successfully");
 
     {
         let mut agent_lock = state.agent.write().await;
@@ -388,6 +410,8 @@ pub async fn send_message(
     let agent = require_agent(&state).await?;
     let rt_handle = state.runtime.handle().clone();
 
+    info!("send_message: chat_id={chat_id}, content_len={}", content.len());
+
     rt_handle.spawn(async move {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let app_handle = app.clone();
@@ -423,9 +447,14 @@ pub async fn send_message(
         });
 
         // Run agent — sends events via tx, drops tx when done
+        debug!("send_message: starting agent processing for chat_id={chat_id}");
         let result = agent.process_message_stream(chat_id, &content, tx).await;
 
         // Store bot response in messages table (SDK stores user msg but not bot response)
+        match &result {
+            Ok(text) => info!("send_message: agent responded, len={}", text.len()),
+            Err(e) => error!("send_message: agent error: {e}"),
+        }
         if let Ok(ref response_text) = result {
             if !response_text.is_empty() {
                 let bot_msg = rayclaw::db::StoredMessage {
