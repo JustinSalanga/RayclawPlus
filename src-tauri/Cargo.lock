@@ -3349,6 +3349,8 @@ checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
 [[package]]
 name = "rayclaw"
 version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57f77639c1ccef279d0d154f9be14efc7dbff36b6747f13dd626e2119e0682da"
 dependencies = [
  "anyhow",
  "async-stream",
