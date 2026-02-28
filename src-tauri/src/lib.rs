@@ -402,6 +402,8 @@ pub fn run() {
             commands::get_chats,
             commands::reset_session,
             commands::new_chat,
+            commands::delete_chat,
+            commands::export_chat_markdown,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

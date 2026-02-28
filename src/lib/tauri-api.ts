@@ -42,6 +42,14 @@ export async function newChat(): Promise<number> {
   return invoke("new_chat");
 }
 
+export async function deleteChat(chatId: number): Promise<void> {
+  return invoke("delete_chat", { chatId });
+}
+
+export async function exportChatMarkdown(chatId: number): Promise<string> {
+  return invoke("export_chat_markdown", { chatId });
+}
+
 export function onAgentStream(callback: (event: AgentStreamEvent) => void): Promise<UnlistenFn> {
   return listen<AgentStreamEvent>("agent-stream", (e) => callback(e.payload));
 }

@@ -683,6 +683,53 @@ pub async fn reset_session(app: tauri::AppHandle, chat_id: i64) -> Result<(), St
 }
 
 #[tauri::command]
+pub async fn delete_chat(app: tauri::AppHandle, chat_id: i64) -> Result<(), String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    info!("delete_chat: chat_id={chat_id}");
+
+    // Deletes all associated data (messages, sessions, logs, chat entry, etc.)
+    state
+        .db
+        .delete_chat_data(chat_id)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn export_chat_markdown(
+    app: tauri::AppHandle,
+    chat_id: i64,
+) -> Result<String, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+
+    // Get chat info
+    let chats = state.db.get_recent_chats(500).map_err(|e| e.to_string())?;
+    let chat = chats.iter().find(|c| c.chat_id == chat_id);
+    let title = chat
+        .and_then(|c| c.chat_title.as_deref())
+        .unwrap_or("Untitled Chat");
+
+    // Get all messages (ordered ASC by timestamp)
+    let messages = state
+        .db
+        .get_all_messages(chat_id)
+        .map_err(|e| e.to_string())?;
+
+    // Format as Markdown
+    let mut md = format!("# {title}\n\n");
+    for msg in &messages {
+        let role = if msg.is_from_bot { "**Assistant**" } else { &format!("**{}**", msg.sender_name) };
+        let ts = &msg.timestamp;
+        md.push_str(&format!("### {role} — {ts}\n\n{}\n\n---\n\n", msg.content));
+    }
+
+    Ok(md)
+}
+
+#[tauri::command]
 pub async fn new_chat(app: tauri::AppHandle) -> Result<i64, String> {
     let desktop = app.state::<DesktopState>();
     let state = require_state(&desktop).await?;

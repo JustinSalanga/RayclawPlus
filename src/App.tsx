@@ -86,6 +86,10 @@ function App() {
         onSelectChat={handleSelectChat}
         onNewChat={handleNewChat}
         onOpenSettings={() => setView("settings")}
+        onChatDeleted={() => {
+          setActiveChatId(null);
+          loadChats();
+        }}
       />
       <ChatWindow
         chatId={activeChatId}

@@ -1,3 +1,5 @@
+import logoText from "../assets/logo-text.png";
+
 interface SetupScreenProps {
   error: string | null;
   onConfigure: () => void;
@@ -7,6 +9,7 @@ export default function SetupScreen({ error, onConfigure }: SetupScreenProps) {
   return (
     <div className="setup-screen">
       <div className="setup-card">
+        <img src={logoText} alt="RayClaw" className="setup-logo" />
         <h1>RayClaw Desktop</h1>
         <p className="setup-subtitle">Configuration required</p>
 

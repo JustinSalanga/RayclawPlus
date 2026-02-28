@@ -459,6 +459,13 @@ body {
   width: 100%;
 }
 
+.setup-logo {
+  display: block;
+  width: 180px;
+  height: auto;
+  margin-bottom: 20px;
+}
+
 .setup-card h1 {
   font-size: 24px;
   font-weight: 600;
@@ -985,4 +992,44 @@ body {
 
 .channel-switch input:checked + .switch-slider::before {
   transform: translateX(18px);
+}
+
+/* ---- Context menu ---- */
+
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  padding: 4px;
+  min-width: 180px;
+}
+
+.context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--charcoal-light);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s ease;
+}
+
+.context-menu-item:hover {
+  background: var(--paper-warm);
+}
+
+.context-menu-danger {
+  color: var(--error);
+}
+
+.context-menu-danger:hover {
+  background: #fdf2f0;
 }
