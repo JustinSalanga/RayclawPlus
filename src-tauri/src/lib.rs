@@ -349,6 +349,8 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
 

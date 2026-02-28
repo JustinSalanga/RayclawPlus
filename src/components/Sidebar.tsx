@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { MoreHorizontal, FileDown, Trash2 } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { ChatSummary } from "../types";
 import { channelLabel } from "../types";
 import { deleteChat, exportChatMarkdown } from "../lib/tauri-api";
@@ -54,18 +56,17 @@ export default function Sidebar({
   const handleExport = async (chatId: number) => {
     setMenuChatId(null);
     try {
-      const md = await exportChatMarkdown(chatId);
-      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
       const chat = chats.find((c) => c.chat_id === chatId);
-      const name = (chat?.chat_title || `chat-${chatId}`).replace(/[^a-zA-Z0-9_-]/g, "_");
-      a.download = `${name}.md`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const defaultName = (chat?.chat_title || `chat-${chatId}`).replace(/[^a-zA-Z0-9_-]/g, "_") + ".md";
+
+      const filePath = await save({
+        defaultPath: defaultName,
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      if (!filePath) return; // user cancelled
+
+      const md = await exportChatMarkdown(chatId);
+      await writeTextFile(filePath, md);
     } catch (err) {
       console.error("Failed to export chat:", err);
     }

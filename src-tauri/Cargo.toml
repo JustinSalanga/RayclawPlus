@@ -26,3 +26,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 teloxide = { version = "0.17", features = ["macros"] }
+tauri-plugin-dialog = "2.6.0"
+tauri-plugin-fs = "2.4.5"
