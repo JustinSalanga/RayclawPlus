@@ -430,6 +430,11 @@ body {
   opacity: 0.5;
 }
 
+.chat-input::-webkit-scrollbar {
+  width: 0;
+  background: transparent;
+}
+
 .btn-send {
   font-family: var(--font-sans);
   font-size: 13px;
