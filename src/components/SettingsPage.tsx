@@ -239,8 +239,12 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
     }
   }, [activeTab, fetchMemories, fetchMemoryObs]);
 
+  // Usage state (error)
+  const [usageError, setUsageError] = useState<string | null>(null);
+
   // Usage handlers
   const fetchUsage = useCallback(() => {
+    setUsageError(null);
     let since: string | undefined;
     const now = new Date();
     if (usageRange === "today") {
@@ -250,7 +254,7 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
     } else if (usageRange === "30d") {
       since = new Date(now.getTime() - 30 * 86400000).toISOString();
     }
-    getUsageSummary(undefined, since).then(setUsageSummary).catch(() => {});
+    getUsageSummary(undefined, since).then(setUsageSummary).catch((e) => setUsageError(String(e)));
     getUsageByModel(undefined, since).then(setUsageModels).catch(() => {});
   }, [usageRange]);
 
@@ -936,7 +940,9 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                 </div>
               </div>
 
-              {usageSummary && (
+              {usageError && <p className="field-error" style={{ marginTop: 12 }}>{usageError}</p>}
+
+              {usageSummary ? (
                 <div className="usage-summary-grid">
                   <div className="usage-stat-card">
                     <span className="usage-stat-value">{usageSummary.requests.toLocaleString()}</span>
@@ -955,6 +961,8 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                     <span className="usage-stat-label">Total Tokens</span>
                   </div>
                 </div>
+              ) : !usageError && (
+                <p className="settings-hint" style={{ marginTop: 12 }}>Loading usage data...</p>
               )}
 
               {usageSummary?.last_request_at && (
