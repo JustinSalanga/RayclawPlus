@@ -413,6 +413,21 @@ pub fn run() {
             commands::get_skill,
             commands::save_skill,
             commands::delete_skill,
+            // Memory management
+            commands::list_memories,
+            commands::search_memories,
+            commands::update_memory,
+            commands::archive_memory,
+            commands::delete_memory,
+            commands::get_memory_observability,
+            // Usage analytics
+            commands::get_usage_summary,
+            commands::get_usage_by_model,
+            // Scheduler
+            commands::list_scheduled_tasks,
+            commands::update_task_status,
+            commands::delete_scheduled_task,
+            commands::get_task_run_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

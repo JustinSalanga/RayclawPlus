@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppStatus, ConfigDto, ChatSummary, StoredMessage, AgentStreamEvent, ChannelStatus, SoulDto, SkillDto, SkillDetailDto } from "../types";
+import type { AppStatus, ConfigDto, ChatSummary, StoredMessage, AgentStreamEvent, ChannelStatus, SoulDto, SkillDto, SkillDetailDto, MemoryDto, MemoryObservabilityDto, UsageSummaryDto, ModelUsageDto, ScheduledTaskDto, TaskRunLogDto } from "../types";
 
 export async function getStatus(): Promise<AppStatus> {
   return invoke("get_status");
@@ -98,4 +98,55 @@ export async function saveSkill(
 
 export async function deleteSkill(name: string): Promise<void> {
   return invoke("delete_skill", { name });
+}
+
+// Memory Management
+export async function listMemories(chatId?: number): Promise<MemoryDto[]> {
+  return invoke("list_memories", { chatId: chatId ?? null });
+}
+
+export async function searchMemories(chatId: number, query: string, includeArchived: boolean): Promise<MemoryDto[]> {
+  return invoke("search_memories", { chatId, query, includeArchived });
+}
+
+export async function updateMemory(id: number, content: string, category: string): Promise<boolean> {
+  return invoke("update_memory", { id, content, category });
+}
+
+export async function archiveMemory(id: number): Promise<boolean> {
+  return invoke("archive_memory", { id });
+}
+
+export async function deleteMemory(id: number): Promise<boolean> {
+  return invoke("delete_memory", { id });
+}
+
+export async function getMemoryObservability(chatId?: number): Promise<MemoryObservabilityDto> {
+  return invoke("get_memory_observability", { chatId: chatId ?? null });
+}
+
+// Usage Analytics
+export async function getUsageSummary(chatId?: number, since?: string): Promise<UsageSummaryDto> {
+  return invoke("get_usage_summary", { chatId: chatId ?? null, since: since ?? null });
+}
+
+export async function getUsageByModel(chatId?: number, since?: string): Promise<ModelUsageDto[]> {
+  return invoke("get_usage_by_model", { chatId: chatId ?? null, since: since ?? null });
+}
+
+// Scheduler
+export async function listScheduledTasks(chatId: number): Promise<ScheduledTaskDto[]> {
+  return invoke("list_scheduled_tasks", { chatId });
+}
+
+export async function updateTaskStatus(taskId: number, status: string): Promise<boolean> {
+  return invoke("update_task_status", { taskId, status });
+}
+
+export async function deleteScheduledTask(taskId: number): Promise<boolean> {
+  return invoke("delete_scheduled_task", { taskId });
+}
+
+export async function getTaskRunLogs(taskId: number): Promise<TaskRunLogDto[]> {
+  return invoke("get_task_run_logs", { taskId });
 }

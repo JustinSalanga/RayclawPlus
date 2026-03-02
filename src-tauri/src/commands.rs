@@ -1006,6 +1006,316 @@ pub async fn delete_skill(app: tauri::AppHandle, name: String) -> Result<(), Str
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Commands: Memory Management
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryDto {
+    pub id: i64,
+    pub chat_id: Option<i64>,
+    pub content: String,
+    pub category: String,
+    pub confidence: f64,
+    pub source: String,
+    pub is_archived: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryObservabilityDto {
+    pub total: i64,
+    pub active: i64,
+    pub archived: i64,
+    pub low_confidence: i64,
+    pub avg_confidence: f64,
+    pub reflector_runs_24h: i64,
+    pub reflector_inserted_24h: i64,
+    pub reflector_updated_24h: i64,
+    pub reflector_skipped_24h: i64,
+    pub injection_events_24h: i64,
+    pub injection_selected_24h: i64,
+    pub injection_candidates_24h: i64,
+}
+
+fn memory_to_dto(m: rayclaw::db::Memory) -> MemoryDto {
+    MemoryDto {
+        id: m.id,
+        chat_id: m.chat_id,
+        content: m.content,
+        category: m.category,
+        confidence: m.confidence,
+        source: m.source,
+        is_archived: m.is_archived,
+        created_at: m.created_at,
+        updated_at: m.updated_at,
+    }
+}
+
+#[tauri::command]
+pub async fn list_memories(
+    app: tauri::AppHandle,
+    chat_id: Option<i64>,
+) -> Result<Vec<MemoryDto>, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let memories = state
+        .db
+        .get_all_memories_for_chat(chat_id)
+        .map_err(|e| e.to_string())?;
+    Ok(memories.into_iter().map(memory_to_dto).collect())
+}
+
+#[tauri::command]
+pub async fn search_memories(
+    app: tauri::AppHandle,
+    chat_id: i64,
+    query: String,
+    include_archived: bool,
+) -> Result<Vec<MemoryDto>, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let memories = state
+        .db
+        .search_memories_with_options(chat_id, &query, 100, include_archived, true)
+        .map_err(|e| e.to_string())?;
+    Ok(memories.into_iter().map(memory_to_dto).collect())
+}
+
+#[tauri::command]
+pub async fn update_memory(
+    app: tauri::AppHandle,
+    id: i64,
+    content: String,
+    category: String,
+) -> Result<bool, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    state
+        .db
+        .update_memory_content(id, &content, &category)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn archive_memory(app: tauri::AppHandle, id: i64) -> Result<bool, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    state.db.archive_memory(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_memory(app: tauri::AppHandle, id: i64) -> Result<bool, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    state.db.delete_memory(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_memory_observability(
+    app: tauri::AppHandle,
+    chat_id: Option<i64>,
+) -> Result<MemoryObservabilityDto, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let summary = state
+        .db
+        .get_memory_observability_summary(chat_id)
+        .map_err(|e| e.to_string())?;
+    Ok(MemoryObservabilityDto {
+        total: summary.total,
+        active: summary.active,
+        archived: summary.archived,
+        low_confidence: summary.low_confidence,
+        avg_confidence: summary.avg_confidence,
+        reflector_runs_24h: summary.reflector_runs_24h,
+        reflector_inserted_24h: summary.reflector_inserted_24h,
+        reflector_updated_24h: summary.reflector_updated_24h,
+        reflector_skipped_24h: summary.reflector_skipped_24h,
+        injection_events_24h: summary.injection_events_24h,
+        injection_selected_24h: summary.injection_selected_24h,
+        injection_candidates_24h: summary.injection_candidates_24h,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Commands: Usage Analytics
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageSummaryDto {
+    pub requests: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+    pub last_request_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelUsageDto {
+    pub model: String,
+    pub requests: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+}
+
+#[tauri::command]
+pub async fn get_usage_summary(
+    app: tauri::AppHandle,
+    chat_id: Option<i64>,
+    since: Option<String>,
+) -> Result<UsageSummaryDto, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let summary = state
+        .db
+        .get_llm_usage_summary_since(chat_id, since.as_deref())
+        .map_err(|e| e.to_string())?;
+    Ok(UsageSummaryDto {
+        requests: summary.requests,
+        input_tokens: summary.input_tokens,
+        output_tokens: summary.output_tokens,
+        total_tokens: summary.total_tokens,
+        last_request_at: summary.last_request_at,
+    })
+}
+
+#[tauri::command]
+pub async fn get_usage_by_model(
+    app: tauri::AppHandle,
+    chat_id: Option<i64>,
+    since: Option<String>,
+) -> Result<Vec<ModelUsageDto>, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let models = state
+        .db
+        .get_llm_usage_by_model(chat_id, since.as_deref(), Some(20))
+        .map_err(|e| e.to_string())?;
+    Ok(models
+        .into_iter()
+        .map(|m| ModelUsageDto {
+            model: m.model,
+            requests: m.requests,
+            input_tokens: m.input_tokens,
+            output_tokens: m.output_tokens,
+            total_tokens: m.total_tokens,
+        })
+        .collect())
+}
+
+// ---------------------------------------------------------------------------
+// Commands: Scheduler
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ScheduledTaskDto {
+    pub id: i64,
+    pub chat_id: i64,
+    pub prompt: String,
+    pub schedule_type: String,
+    pub schedule_value: String,
+    pub next_run: String,
+    pub last_run: Option<String>,
+    pub status: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskRunLogDto {
+    pub id: i64,
+    pub task_id: i64,
+    pub chat_id: i64,
+    pub started_at: String,
+    pub finished_at: String,
+    pub duration_ms: i64,
+    pub success: bool,
+    pub result_summary: Option<String>,
+}
+
+#[tauri::command]
+pub async fn list_scheduled_tasks(
+    app: tauri::AppHandle,
+    chat_id: i64,
+) -> Result<Vec<ScheduledTaskDto>, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let tasks = state
+        .db
+        .get_tasks_for_chat(chat_id)
+        .map_err(|e| e.to_string())?;
+    Ok(tasks
+        .into_iter()
+        .map(|t| ScheduledTaskDto {
+            id: t.id,
+            chat_id: t.chat_id,
+            prompt: t.prompt,
+            schedule_type: t.schedule_type,
+            schedule_value: t.schedule_value,
+            next_run: t.next_run,
+            last_run: t.last_run,
+            status: t.status,
+            created_at: t.created_at,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn update_task_status(
+    app: tauri::AppHandle,
+    task_id: i64,
+    status: String,
+) -> Result<bool, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    // Only allow safe status transitions
+    if !["active", "paused", "cancelled"].contains(&status.as_str()) {
+        return Err(format!("Invalid status: {status}"));
+    }
+    state
+        .db
+        .update_task_status(task_id, &status)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_scheduled_task(
+    app: tauri::AppHandle,
+    task_id: i64,
+) -> Result<bool, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    state.db.delete_task(task_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_task_run_logs(
+    app: tauri::AppHandle,
+    task_id: i64,
+) -> Result<Vec<TaskRunLogDto>, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let logs = state
+        .db
+        .get_task_run_logs(task_id, 50)
+        .map_err(|e| e.to_string())?;
+    Ok(logs
+        .into_iter()
+        .map(|l| TaskRunLogDto {
+            id: l.id,
+            task_id: l.task_id,
+            chat_id: l.chat_id,
+            started_at: l.started_at,
+            finished_at: l.finished_at,
+            duration_ms: l.duration_ms,
+            success: l.success,
+            result_summary: l.result_summary,
+        })
+        .collect())
+}
+
 /// Extract the body content from a SKILL.md (everything after the YAML frontmatter).
 fn extract_skill_body(raw: &str) -> String {
     let trimmed = raw.trim_start_matches('\u{feff}');

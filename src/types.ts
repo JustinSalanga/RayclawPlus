@@ -132,6 +132,75 @@ export interface SkillDetailDto {
   content: string;
 }
 
+// Memory
+export interface MemoryDto {
+  id: number;
+  chat_id: number | null;
+  content: string;
+  category: string;
+  confidence: number;
+  source: string;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryObservabilityDto {
+  total: number;
+  active: number;
+  archived: number;
+  low_confidence: number;
+  avg_confidence: number;
+  reflector_runs_24h: number;
+  reflector_inserted_24h: number;
+  reflector_updated_24h: number;
+  reflector_skipped_24h: number;
+  injection_events_24h: number;
+  injection_selected_24h: number;
+  injection_candidates_24h: number;
+}
+
+// Usage Analytics
+export interface UsageSummaryDto {
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  last_request_at: string | null;
+}
+
+export interface ModelUsageDto {
+  model: string;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+// Scheduler
+export interface ScheduledTaskDto {
+  id: number;
+  chat_id: number;
+  prompt: string;
+  schedule_type: string;
+  schedule_value: string;
+  next_run: string;
+  last_run: string | null;
+  status: string;
+  created_at: string;
+}
+
+export interface TaskRunLogDto {
+  id: number;
+  task_id: number;
+  chat_id: number;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  success: boolean;
+  result_summary: string | null;
+}
+
 export type AgentStreamEvent =
   | { type: "iteration"; chat_id: number; iteration: number }
   | { type: "tool_start"; chat_id: number; name: string }

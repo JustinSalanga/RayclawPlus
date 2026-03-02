@@ -2173,3 +2173,482 @@ body {
 .attachment-remove:hover {
   color: var(--error);
 }
+
+/* ==================== Memory Management ==================== */
+
+.memory-obs-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.memory-obs-card {
+  background: var(--paper-warm);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.memory-obs-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.memory-obs-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.memory-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.memory-search-input {
+  flex: 1;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--paper);
+  color: var(--charcoal);
+}
+
+.memory-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.memory-toggle-archived {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.memory-edit-form {
+  background: var(--paper-warm);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.memory-edit-form h4 {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.memory-edit-form textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  resize: vertical;
+  background: var(--paper);
+  color: var(--charcoal);
+  margin-bottom: 8px;
+}
+
+.memory-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-edit-row select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--paper);
+  color: var(--charcoal);
+}
+
+.memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memory-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--paper);
+}
+
+.memory-item-archived {
+  opacity: 0.55;
+}
+
+.memory-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.memory-item-category {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: var(--accent);
+  color: white;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.memory-item-conf {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.memory-item-source {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.memory-item-badge {
+  font-size: 10px;
+  background: var(--border);
+  color: var(--muted);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.memory-item-content {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--charcoal);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.memory-item-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.memory-item-date {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.memory-item-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.memory-item-actions button {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+  color: var(--charcoal-light);
+}
+
+.memory-item-actions button:hover {
+  background: var(--paper-warm);
+}
+
+.memory-btn-danger {
+  color: var(--error) !important;
+}
+
+.memory-btn-danger:hover {
+  background: rgba(184, 66, 51, 0.08) !important;
+}
+
+/* ==================== Usage Analytics ==================== */
+
+.usage-range-select {
+  display: flex;
+  gap: 4px;
+}
+
+.usage-range-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--charcoal-light);
+}
+
+.usage-range-btn:hover {
+  background: var(--paper-warm);
+}
+
+.usage-range-active {
+  background: var(--accent) !important;
+  color: white !important;
+  border-color: var(--accent) !important;
+}
+
+.usage-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.usage-stat-card {
+  background: var(--paper-warm);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.usage-stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+
+.usage-stat-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.usage-model-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.usage-model-table th {
+  text-align: left;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+
+.usage-model-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.usage-model-name {
+  font-family: var(--font-sans) !important;
+  font-weight: 500;
+}
+
+/* ==================== Scheduler ==================== */
+
+.scheduler-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scheduler-task-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--paper);
+}
+
+.scheduler-task-paused {
+  opacity: 0.65;
+}
+
+.scheduler-task-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.scheduler-task-id {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+
+.scheduler-task-status {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.scheduler-status-active {
+  background: var(--accent);
+  color: white;
+}
+
+.scheduler-status-paused {
+  background: var(--border);
+  color: var(--charcoal-light);
+}
+
+.scheduler-status-cancelled {
+  background: var(--error);
+  color: white;
+}
+
+.scheduler-task-type {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.scheduler-task-prompt {
+  font-size: 13px;
+  color: var(--charcoal);
+  margin-bottom: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.scheduler-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.scheduler-task-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.scheduler-task-actions button {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+  color: var(--charcoal-light);
+}
+
+.scheduler-task-actions button:hover {
+  background: var(--paper-warm);
+}
+
+.task-logs-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 16px;
+  background: var(--paper-warm);
+}
+
+.task-logs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.task-logs-header h4 {
+  font-size: 13px;
+}
+
+.task-log-item {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: var(--paper);
+}
+
+.task-log-failed {
+  border-color: var(--error);
+}
+
+.task-log-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.task-log-ok {
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--accent);
+  color: white;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.task-log-err {
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--error);
+  color: white;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.task-log-summary {
+  font-size: 12px;
+  color: var(--charcoal-light);
+  margin-top: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ==================== Dark mode overrides for P1 ==================== */
+
+[data-theme="dark"] .memory-obs-card,
+[data-theme="dark"] .usage-stat-card {
+  background: var(--paper-warm);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .memory-search-input,
+[data-theme="dark"] .memory-edit-form textarea,
+[data-theme="dark"] .memory-edit-row select {
+  background: var(--paper);
+  color: var(--charcoal);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .memory-item,
+[data-theme="dark"] .scheduler-task-item,
+[data-theme="dark"] .task-log-item {
+  background: var(--paper);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .usage-model-table th,
+[data-theme="dark"] .usage-model-table td {
+  border-color: var(--border);
+}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { getConfig, saveConfig, getChannelStatus, toggleChannel, listSkills, getSkill, saveSkill, deleteSkill, readSoul, saveSoul } from "../lib/tauri-api";
-import type { ConfigDto, ChannelStatus, SkillDto, SkillDetailDto } from "../types";
+import { getConfig, saveConfig, getChannelStatus, toggleChannel, listSkills, getSkill, saveSkill, deleteSkill, readSoul, saveSoul, listMemories, searchMemories, updateMemory, archiveMemory, deleteMemory, getMemoryObservability, getUsageSummary, getUsageByModel, listScheduledTasks, updateTaskStatus, deleteScheduledTask, getTaskRunLogs } from "../lib/tauri-api";
+import type { ConfigDto, ChannelStatus, SkillDto, SkillDetailDto, MemoryDto, MemoryObservabilityDto, UsageSummaryDto, ModelUsageDto, ScheduledTaskDto, TaskRunLogDto } from "../types";
 
 const PROVIDERS = [
   "anthropic",
@@ -21,6 +21,9 @@ const PROVIDERS = [
 type SettingsTab =
   | "provider"
   | "skills"
+  | "memory"
+  | "usage"
+  | "scheduler"
   | "session"
   | "paths"
   | "advanced"
@@ -122,6 +125,26 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   const [soulPath, setSoulPath] = useState("");
   const [soulSaving, setSoulSaving] = useState(false);
   const [soulSaved, setSoulSaved] = useState(false);
+
+  // Memory state
+  const [memories, setMemories] = useState<MemoryDto[]>([]);
+  const [memorySearch, setMemorySearch] = useState("");
+  const [memoryShowArchived, setMemoryShowArchived] = useState(false);
+  const [memoryObs, setMemoryObs] = useState<MemoryObservabilityDto | null>(null);
+  const [editingMemory, setEditingMemory] = useState<MemoryDto | null>(null);
+  const [editMemoryContent, setEditMemoryContent] = useState("");
+  const [editMemoryCategory, setEditMemoryCategory] = useState("");
+
+  // Usage state
+  const [usageSummary, setUsageSummary] = useState<UsageSummaryDto | null>(null);
+  const [usageModels, setUsageModels] = useState<ModelUsageDto[]>([]);
+  const [usageRange, setUsageRange] = useState<string>("all");
+
+  // Scheduler state
+  const [schedulerChatId, setSchedulerChatId] = useState<number>(0);
+  const [schedulerTasks, setSchedulerTasks] = useState<ScheduledTaskDto[]>([]);
+  const [taskLogs, setTaskLogs] = useState<TaskRunLogDto[]>([]);
+  const [viewingTaskId, setViewingTaskId] = useState<number | null>(null);
 
   const isDirty = config ? JSON.stringify(config) !== initialConfigRef.current : false;
 
@@ -307,6 +330,119 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
   const soulDirty = soulContent !== soulOriginal;
 
+  // Memory handlers
+  const fetchMemories = useCallback(() => {
+    if (memorySearch.trim()) {
+      // Use chat_id 0 to search global memories (search includes global by default)
+      searchMemories(0, memorySearch, memoryShowArchived).then(setMemories).catch(() => {});
+    } else {
+      listMemories().then((all) => {
+        setMemories(memoryShowArchived ? all : all.filter((m) => !m.is_archived));
+      }).catch(() => {});
+    }
+  }, [memorySearch, memoryShowArchived]);
+
+  const fetchMemoryObs = useCallback(() => {
+    getMemoryObservability().then(setMemoryObs).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "memory") {
+      fetchMemories();
+      fetchMemoryObs();
+    }
+  }, [activeTab, fetchMemories, fetchMemoryObs]);
+
+  const handleArchiveMemory = async (id: number) => {
+    await archiveMemory(id).catch(() => {});
+    fetchMemories();
+    fetchMemoryObs();
+  };
+
+  const handleDeleteMemory = async (id: number) => {
+    if (!window.confirm("Permanently delete this memory?")) return;
+    await deleteMemory(id).catch(() => {});
+    fetchMemories();
+    fetchMemoryObs();
+  };
+
+  const handleStartEditMemory = (m: MemoryDto) => {
+    setEditingMemory(m);
+    setEditMemoryContent(m.content);
+    setEditMemoryCategory(m.category);
+  };
+
+  const handleSaveMemory = async () => {
+    if (!editingMemory) return;
+    await updateMemory(editingMemory.id, editMemoryContent, editMemoryCategory).catch(() => {});
+    setEditingMemory(null);
+    fetchMemories();
+  };
+
+  // Usage handlers
+  const fetchUsage = useCallback(() => {
+    let since: string | undefined;
+    const now = new Date();
+    if (usageRange === "today") {
+      since = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    } else if (usageRange === "7d") {
+      since = new Date(now.getTime() - 7 * 86400000).toISOString();
+    } else if (usageRange === "30d") {
+      since = new Date(now.getTime() - 30 * 86400000).toISOString();
+    }
+    getUsageSummary(undefined, since).then(setUsageSummary).catch(() => {});
+    getUsageByModel(undefined, since).then(setUsageModels).catch(() => {});
+  }, [usageRange]);
+
+  useEffect(() => {
+    if (activeTab === "usage") fetchUsage();
+  }, [activeTab, fetchUsage]);
+
+  // Scheduler handlers
+  const fetchTasks = useCallback(() => {
+    if (schedulerChatId > 0) {
+      listScheduledTasks(schedulerChatId).then(setSchedulerTasks).catch(() => {});
+    } else {
+      setSchedulerTasks([]);
+    }
+  }, [schedulerChatId]);
+
+  useEffect(() => {
+    if (activeTab === "scheduler") fetchTasks();
+  }, [activeTab, fetchTasks]);
+
+  const handlePauseTask = async (id: number) => {
+    await updateTaskStatus(id, "paused").catch(() => {});
+    fetchTasks();
+  };
+
+  const handleResumeTask = async (id: number) => {
+    await updateTaskStatus(id, "active").catch(() => {});
+    fetchTasks();
+  };
+
+  const handleCancelTask = async (id: number) => {
+    if (!window.confirm("Cancel this scheduled task?")) return;
+    await updateTaskStatus(id, "cancelled").catch(() => {});
+    fetchTasks();
+  };
+
+  const handleDeleteTask = async (id: number) => {
+    if (!window.confirm("Permanently delete this task?")) return;
+    await deleteScheduledTask(id).catch(() => {});
+    setViewingTaskId(null);
+    fetchTasks();
+  };
+
+  const handleViewTaskLogs = async (id: number) => {
+    setViewingTaskId(id);
+    const logs = await getTaskRunLogs(id).catch(() => [] as TaskRunLogDto[]);
+    setTaskLogs(logs);
+  };
+
+  const fmtTokens = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
+  const fmtDate = (s: string) => { try { return new Date(s).toLocaleString(); } catch { return s; } };
+
   const isBedrock = config.llm_provider === "bedrock";
   const isChannelTab = activeTab.startsWith("ch:");
   const runningCount = channelStatuses.filter((s) => s.running).length;
@@ -395,6 +531,25 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
               ))}
             </div>
           )}
+
+          <button
+            className={`settings-nav-item ${activeTab === "memory" ? "settings-nav-active" : ""}`}
+            onClick={() => selectTab("memory")}
+          >
+            Memory
+          </button>
+          <button
+            className={`settings-nav-item ${activeTab === "usage" ? "settings-nav-active" : ""}`}
+            onClick={() => selectTab("usage")}
+          >
+            Usage
+          </button>
+          <button
+            className={`settings-nav-item ${activeTab === "scheduler" ? "settings-nav-active" : ""}`}
+            onClick={() => selectTab("scheduler")}
+          >
+            Scheduler
+          </button>
 
           <button
             className={`settings-nav-item ${activeTab === "session" ? "settings-nav-active" : ""}`}
@@ -659,6 +814,258 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Memory */}
+          {activeTab === "memory" && (
+            <div className="settings-panel-content">
+              <h2>Memory</h2>
+
+              {/* Observability summary */}
+              {memoryObs && (
+                <div className="memory-obs-grid">
+                  <div className="memory-obs-card">
+                    <span className="memory-obs-value">{memoryObs.active}</span>
+                    <span className="memory-obs-label">Active</span>
+                  </div>
+                  <div className="memory-obs-card">
+                    <span className="memory-obs-value">{memoryObs.archived}</span>
+                    <span className="memory-obs-label">Archived</span>
+                  </div>
+                  <div className="memory-obs-card">
+                    <span className="memory-obs-value">{memoryObs.low_confidence}</span>
+                    <span className="memory-obs-label">Low Conf.</span>
+                  </div>
+                  <div className="memory-obs-card">
+                    <span className="memory-obs-value">{(memoryObs.avg_confidence * 100).toFixed(0)}%</span>
+                    <span className="memory-obs-label">Avg Conf.</span>
+                  </div>
+                  <div className="memory-obs-card">
+                    <span className="memory-obs-value">{memoryObs.reflector_runs_24h}</span>
+                    <span className="memory-obs-label">Reflector (24h)</span>
+                  </div>
+                  <div className="memory-obs-card">
+                    <span className="memory-obs-value">{memoryObs.injection_selected_24h}</span>
+                    <span className="memory-obs-label">Injected (24h)</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Search + filter */}
+              <div className="memory-toolbar">
+                <input
+                  type="text"
+                  className="memory-search-input"
+                  placeholder="Search memories..."
+                  value={memorySearch}
+                  onChange={(e) => setMemorySearch(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") fetchMemories(); }}
+                />
+                <label className="memory-toggle-archived">
+                  <input
+                    type="checkbox"
+                    checked={memoryShowArchived}
+                    onChange={(e) => setMemoryShowArchived(e.target.checked)}
+                  />
+                  Show archived
+                </label>
+              </div>
+
+              {/* Edit form */}
+              {editingMemory && (
+                <div className="memory-edit-form">
+                  <h4>Edit Memory #{editingMemory.id}</h4>
+                  <textarea
+                    value={editMemoryContent}
+                    onChange={(e) => setEditMemoryContent(e.target.value)}
+                    rows={4}
+                  />
+                  <div className="memory-edit-row">
+                    <select value={editMemoryCategory} onChange={(e) => setEditMemoryCategory(e.target.value)}>
+                      <option value="PROFILE">PROFILE</option>
+                      <option value="KNOWLEDGE">KNOWLEDGE</option>
+                      <option value="EVENT">EVENT</option>
+                    </select>
+                    <button className="btn-save" style={{ fontSize: 12, padding: "4px 12px" }} onClick={handleSaveMemory}>Save</button>
+                    <button className="btn-back" style={{ fontSize: 12 }} onClick={() => setEditingMemory(null)}>Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Memory list */}
+              <div className="memory-list">
+                {memories.length === 0 && <p className="settings-hint">No memories found.</p>}
+                {memories.map((m) => (
+                  <div key={m.id} className={`memory-item ${m.is_archived ? "memory-item-archived" : ""}`}>
+                    <div className="memory-item-header">
+                      <span className="memory-item-category">{m.category}</span>
+                      <span className="memory-item-conf">{(m.confidence * 100).toFixed(0)}%</span>
+                      <span className="memory-item-source">{m.source}</span>
+                      {m.is_archived && <span className="memory-item-badge">archived</span>}
+                    </div>
+                    <p className="memory-item-content">{m.content}</p>
+                    <div className="memory-item-footer">
+                      <span className="memory-item-date">{fmtDate(m.updated_at)}</span>
+                      <div className="memory-item-actions">
+                        <button onClick={() => handleStartEditMemory(m)}>Edit</button>
+                        {!m.is_archived && <button onClick={() => handleArchiveMemory(m.id)}>Archive</button>}
+                        <button className="memory-btn-danger" onClick={() => handleDeleteMemory(m.id)}>Delete</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Usage Analytics */}
+          {activeTab === "usage" && (
+            <div className="settings-panel-content">
+              <div className="channel-panel-header">
+                <h2>Usage</h2>
+                <div className="usage-range-select">
+                  {["today", "7d", "30d", "all"].map((r) => (
+                    <button
+                      key={r}
+                      className={`usage-range-btn ${usageRange === r ? "usage-range-active" : ""}`}
+                      onClick={() => setUsageRange(r)}
+                    >
+                      {r === "all" ? "All Time" : r === "today" ? "Today" : r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {usageSummary && (
+                <div className="usage-summary-grid">
+                  <div className="usage-stat-card">
+                    <span className="usage-stat-value">{usageSummary.requests.toLocaleString()}</span>
+                    <span className="usage-stat-label">Requests</span>
+                  </div>
+                  <div className="usage-stat-card">
+                    <span className="usage-stat-value">{fmtTokens(usageSummary.input_tokens)}</span>
+                    <span className="usage-stat-label">Input Tokens</span>
+                  </div>
+                  <div className="usage-stat-card">
+                    <span className="usage-stat-value">{fmtTokens(usageSummary.output_tokens)}</span>
+                    <span className="usage-stat-label">Output Tokens</span>
+                  </div>
+                  <div className="usage-stat-card">
+                    <span className="usage-stat-value">{fmtTokens(usageSummary.total_tokens)}</span>
+                    <span className="usage-stat-label">Total Tokens</span>
+                  </div>
+                </div>
+              )}
+
+              {usageSummary?.last_request_at && (
+                <p className="settings-hint" style={{ marginTop: 8 }}>
+                  Last request: {fmtDate(usageSummary.last_request_at)}
+                </p>
+              )}
+
+              {usageModels.length > 0 && (
+                <>
+                  <div className="settings-divider" />
+                  <h3>By Model</h3>
+                  <table className="usage-model-table">
+                    <thead>
+                      <tr>
+                        <th>Model</th>
+                        <th>Requests</th>
+                        <th>Input</th>
+                        <th>Output</th>
+                        <th>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {usageModels.map((m) => (
+                        <tr key={m.model}>
+                          <td className="usage-model-name">{m.model}</td>
+                          <td>{m.requests.toLocaleString()}</td>
+                          <td>{fmtTokens(m.input_tokens)}</td>
+                          <td>{fmtTokens(m.output_tokens)}</td>
+                          <td>{fmtTokens(m.total_tokens)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Scheduler */}
+          {activeTab === "scheduler" && (
+            <div className="settings-panel-content">
+              <h2>Scheduled Tasks</h2>
+
+              <label className="settings-field">
+                <span>Chat ID</span>
+                <input
+                  type="number"
+                  value={schedulerChatId || ""}
+                  onChange={(e) => setSchedulerChatId(Number(e.target.value) || 0)}
+                  placeholder="Enter chat ID to view tasks"
+                />
+              </label>
+              {schedulerChatId > 0 && (
+                <button className="btn-save" style={{ fontSize: 12, padding: "4px 12px", marginBottom: 12 }} onClick={fetchTasks}>
+                  Refresh
+                </button>
+              )}
+
+              {/* Task run logs */}
+              {viewingTaskId && (
+                <div className="task-logs-panel">
+                  <div className="task-logs-header">
+                    <h4>Run Logs — Task #{viewingTaskId}</h4>
+                    <button className="btn-back" style={{ fontSize: 12 }} onClick={() => setViewingTaskId(null)}>Close</button>
+                  </div>
+                  {taskLogs.length === 0 && <p className="settings-hint">No runs recorded yet.</p>}
+                  {taskLogs.map((log) => (
+                    <div key={log.id} className={`task-log-item ${log.success ? "" : "task-log-failed"}`}>
+                      <div className="task-log-header">
+                        <span className={log.success ? "task-log-ok" : "task-log-err"}>
+                          {log.success ? "OK" : "FAIL"}
+                        </span>
+                        <span>{fmtDate(log.started_at)}</span>
+                        <span>{(log.duration_ms / 1000).toFixed(1)}s</span>
+                      </div>
+                      {log.result_summary && <p className="task-log-summary">{log.result_summary}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Task list */}
+              <div className="scheduler-task-list">
+                {schedulerChatId > 0 && schedulerTasks.length === 0 && !viewingTaskId && (
+                  <p className="settings-hint">No active or paused tasks for this chat.</p>
+                )}
+                {schedulerTasks.map((t) => (
+                  <div key={t.id} className={`scheduler-task-item ${t.status === "paused" ? "scheduler-task-paused" : ""}`}>
+                    <div className="scheduler-task-header">
+                      <span className="scheduler-task-id">#{t.id}</span>
+                      <span className={`scheduler-task-status scheduler-status-${t.status}`}>{t.status}</span>
+                      <span className="scheduler-task-type">{t.schedule_type}</span>
+                    </div>
+                    <p className="scheduler-task-prompt">{t.prompt.length > 120 ? t.prompt.slice(0, 120) + "..." : t.prompt}</p>
+                    <div className="scheduler-task-meta">
+                      <span>Schedule: {t.schedule_value}</span>
+                      <span>Next: {fmtDate(t.next_run)}</span>
+                      {t.last_run && <span>Last: {fmtDate(t.last_run)}</span>}
+                    </div>
+                    <div className="scheduler-task-actions">
+                      {t.status === "active" && <button onClick={() => handlePauseTask(t.id)}>Pause</button>}
+                      {t.status === "paused" && <button onClick={() => handleResumeTask(t.id)}>Resume</button>}
+                      <button onClick={() => handleViewTaskLogs(t.id)}>Logs</button>
+                      <button onClick={() => handleCancelTask(t.id)}>Cancel</button>
+                      <button className="memory-btn-danger" onClick={() => handleDeleteTask(t.id)}>Delete</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
