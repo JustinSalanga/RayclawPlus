@@ -195,6 +195,82 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
     }
   };
 
+  // Skills handlers
+  const fetchSkills = useCallback(() => {
+    listSkills().then(setSkills).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "skills") fetchSkills();
+  }, [activeTab, fetchSkills]);
+
+  // Soul handlers
+  const fetchSoul = useCallback(() => {
+    readSoul().then((s) => {
+      setSoulContent(s.content);
+      setSoulOriginal(s.content);
+      setSoulPath(s.path);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "advanced") fetchSoul();
+  }, [activeTab, fetchSoul]);
+
+  // Memory handlers
+  const fetchMemories = useCallback(() => {
+    if (memorySearch.trim()) {
+      searchMemories(0, memorySearch, memoryShowArchived).then(setMemories).catch(() => {});
+    } else {
+      listMemories().then((all) => {
+        setMemories(memoryShowArchived ? all : all.filter((m) => !m.is_archived));
+      }).catch(() => {});
+    }
+  }, [memorySearch, memoryShowArchived]);
+
+  const fetchMemoryObs = useCallback(() => {
+    getMemoryObservability().then(setMemoryObs).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "memory") {
+      fetchMemories();
+      fetchMemoryObs();
+    }
+  }, [activeTab, fetchMemories, fetchMemoryObs]);
+
+  // Usage handlers
+  const fetchUsage = useCallback(() => {
+    let since: string | undefined;
+    const now = new Date();
+    if (usageRange === "today") {
+      since = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    } else if (usageRange === "7d") {
+      since = new Date(now.getTime() - 7 * 86400000).toISOString();
+    } else if (usageRange === "30d") {
+      since = new Date(now.getTime() - 30 * 86400000).toISOString();
+    }
+    getUsageSummary(undefined, since).then(setUsageSummary).catch(() => {});
+    getUsageByModel(undefined, since).then(setUsageModels).catch(() => {});
+  }, [usageRange]);
+
+  useEffect(() => {
+    if (activeTab === "usage") fetchUsage();
+  }, [activeTab, fetchUsage]);
+
+  // Scheduler handlers
+  const fetchTasks = useCallback(() => {
+    if (schedulerChatId > 0) {
+      listScheduledTasks(schedulerChatId).then(setSchedulerTasks).catch(() => {});
+    } else {
+      setSchedulerTasks([]);
+    }
+  }, [schedulerChatId]);
+
+  useEffect(() => {
+    if (activeTab === "scheduler") fetchTasks();
+  }, [activeTab, fetchTasks]);
+
   const handleBack = () => {
     if (isDirty) {
       if (!window.confirm("You have unsaved changes. Discard and leave?")) return;
@@ -228,15 +304,6 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
     document.documentElement.setAttribute("data-theme", enabled ? "dark" : "light");
     localStorage.setItem("rayclaw-theme", enabled ? "dark" : "light");
   };
-
-  // Skills handlers
-  const fetchSkills = useCallback(() => {
-    listSkills().then(setSkills).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (activeTab === "skills") fetchSkills();
-  }, [activeTab, fetchSkills]);
 
   const handleSelectSkill = async (name: string) => {
     setSkillError(null);
@@ -300,19 +367,6 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
     }
   };
 
-  // Soul handlers
-  const fetchSoul = useCallback(() => {
-    readSoul().then((s) => {
-      setSoulContent(s.content);
-      setSoulOriginal(s.content);
-      setSoulPath(s.path);
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (activeTab === "advanced") fetchSoul();
-  }, [activeTab, fetchSoul]);
-
   const handleSaveSoul = async () => {
     setSoulSaving(true);
     setSoulSaved(false);
@@ -329,29 +383,6 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   };
 
   const soulDirty = soulContent !== soulOriginal;
-
-  // Memory handlers
-  const fetchMemories = useCallback(() => {
-    if (memorySearch.trim()) {
-      // Use chat_id 0 to search global memories (search includes global by default)
-      searchMemories(0, memorySearch, memoryShowArchived).then(setMemories).catch(() => {});
-    } else {
-      listMemories().then((all) => {
-        setMemories(memoryShowArchived ? all : all.filter((m) => !m.is_archived));
-      }).catch(() => {});
-    }
-  }, [memorySearch, memoryShowArchived]);
-
-  const fetchMemoryObs = useCallback(() => {
-    getMemoryObservability().then(setMemoryObs).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (activeTab === "memory") {
-      fetchMemories();
-      fetchMemoryObs();
-    }
-  }, [activeTab, fetchMemories, fetchMemoryObs]);
 
   const handleArchiveMemory = async (id: number) => {
     await archiveMemory(id).catch(() => {});
@@ -378,38 +409,6 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
     setEditingMemory(null);
     fetchMemories();
   };
-
-  // Usage handlers
-  const fetchUsage = useCallback(() => {
-    let since: string | undefined;
-    const now = new Date();
-    if (usageRange === "today") {
-      since = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-    } else if (usageRange === "7d") {
-      since = new Date(now.getTime() - 7 * 86400000).toISOString();
-    } else if (usageRange === "30d") {
-      since = new Date(now.getTime() - 30 * 86400000).toISOString();
-    }
-    getUsageSummary(undefined, since).then(setUsageSummary).catch(() => {});
-    getUsageByModel(undefined, since).then(setUsageModels).catch(() => {});
-  }, [usageRange]);
-
-  useEffect(() => {
-    if (activeTab === "usage") fetchUsage();
-  }, [activeTab, fetchUsage]);
-
-  // Scheduler handlers
-  const fetchTasks = useCallback(() => {
-    if (schedulerChatId > 0) {
-      listScheduledTasks(schedulerChatId).then(setSchedulerTasks).catch(() => {});
-    } else {
-      setSchedulerTasks([]);
-    }
-  }, [schedulerChatId]);
-
-  useEffect(() => {
-    if (activeTab === "scheduler") fetchTasks();
-  }, [activeTab, fetchTasks]);
 
   const handlePauseTask = async (id: number) => {
     await updateTaskStatus(id, "paused").catch(() => {});
