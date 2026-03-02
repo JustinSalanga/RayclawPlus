@@ -110,8 +110,9 @@ export function channelLabel(chatType: string): string | null {
 }
 
 export type AgentStreamEvent =
-  | { type: "iteration"; iteration: number }
-  | { type: "tool_start"; name: string }
-  | { type: "tool_result"; name: string; is_error: boolean; preview: string; duration_ms: number }
-  | { type: "text_delta"; delta: string }
-  | { type: "final_response"; text: string };
+  | { type: "iteration"; chat_id: number; iteration: number }
+  | { type: "tool_start"; chat_id: number; name: string }
+  | { type: "tool_result"; chat_id: number; name: string; is_error: boolean; preview: string; duration_ms: number }
+  | { type: "text_delta"; chat_id: number; delta: string }
+  | { type: "final_response"; chat_id: number; text: string }
+  | { type: "error"; chat_id: number; message: string };

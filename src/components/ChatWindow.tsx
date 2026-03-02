@@ -18,6 +18,8 @@ interface ChatWindowProps {
   chatType?: string;
 }
 
+const STREAM_TIMEOUT_MS = 90_000; // 90s no event → auto-unlock
+
 export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
   const channel = chatType ? inferChannel(chatType) : "desktop";
   const isReadOnly = channel !== "desktop";
@@ -26,11 +28,31 @@ export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [toolSteps, setToolSteps] = useState<ToolStepData[]>([]);
+  const [sendError, setSendError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatIdRef = useRef<number | null>(chatId);
+  const streamTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamingChatIdRef = useRef<number | null>(null);
+
+  // Keep chatIdRef in sync
+  useEffect(() => {
+    chatIdRef.current = chatId;
+  }, [chatId]);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
+
+  // Reset streaming state when switching chats
+  useEffect(() => {
+    setStreamingText("");
+    setToolSteps([]);
+    setSendError(null);
+    // Only reset isStreaming if the new chat is not the one being streamed
+    if (streamingChatIdRef.current !== chatId) {
+      setIsStreaming(false);
+    }
+  }, [chatId]);
 
   // Load history when chat changes
   useEffect(() => {
@@ -41,9 +63,36 @@ export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
     });
   }, [chatId, scrollToBottom]);
 
-  // Listen for streaming events
+  // Reset stream timeout whenever we get an event
+  const resetStreamTimeout = useCallback(() => {
+    if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
+    streamTimeoutRef.current = setTimeout(() => {
+      console.warn("Stream timeout — auto-unlocking input");
+      setIsStreaming(false);
+      setStreamingText("");
+      setToolSteps([]);
+      setSendError("Response timed out. Please try again.");
+      streamingChatIdRef.current = null;
+    }, STREAM_TIMEOUT_MS);
+  }, []);
+
+  const clearStreamTimeout = useCallback(() => {
+    if (streamTimeoutRef.current) {
+      clearTimeout(streamTimeoutRef.current);
+      streamTimeoutRef.current = null;
+    }
+  }, []);
+
+  // Listen for streaming events — filter by chatId
   useEffect(() => {
     const unlistenPromise = onAgentStream((event: AgentStreamEvent) => {
+      const eventChatId = event.chat_id;
+
+      // Only process events for the currently viewed chat
+      if (eventChatId !== chatIdRef.current) return;
+
+      resetStreamTimeout();
+
       switch (event.type) {
         case "text_delta":
           setStreamingText((prev) => prev + event.delta);
@@ -62,19 +111,27 @@ export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
             )
           );
           break;
-        case "final_response":
+        case "error":
+          clearStreamTimeout();
+          setIsStreaming(false);
+          setStreamingText("");
           setToolSteps([]);
-          // Reload history to get the persisted messages, then clear streaming
-          if (chatId !== null) {
-            // Small delay to let the backend persist the bot response
+          setSendError(event.message);
+          streamingChatIdRef.current = null;
+          break;
+        case "final_response":
+          clearStreamTimeout();
+          setToolSteps([]);
+          streamingChatIdRef.current = null;
+          if (chatIdRef.current !== null) {
+            const currentChatId = chatIdRef.current;
             setTimeout(() => {
-              getHistory(chatId).then((msgs) => {
+              getHistory(currentChatId).then((msgs) => {
                 setMessages(msgs);
                 setStreamingText("");
                 setIsStreaming(false);
                 setTimeout(scrollToBottom, 50);
               }).catch(() => {
-                // If history reload fails, keep the streaming text as a fallback
                 setIsStreaming(false);
               });
             }, 300);
@@ -88,8 +145,9 @@ export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
 
     return () => {
       unlistenPromise.then((fn) => fn());
+      clearStreamTimeout();
     };
-  }, [chatId, scrollToBottom]);
+  }, [scrollToBottom, resetStreamTimeout, clearStreamTimeout]);
 
   const handleSend = async () => {
     if (!input.trim() || !chatId || isStreaming) return;
@@ -99,6 +157,9 @@ export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
     setIsStreaming(true);
     setStreamingText("");
     setToolSteps([]);
+    setSendError(null);
+    streamingChatIdRef.current = chatId;
+    resetStreamTimeout();
 
     // Optimistically add user message
     const userMsg: StoredMessage = {
@@ -112,7 +173,24 @@ export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
     setMessages((prev) => [...prev, userMsg]);
     setTimeout(scrollToBottom, 50);
 
-    await sendMessage(chatId, userText);
+    try {
+      await sendMessage(chatId, userText);
+    } catch (err) {
+      // IPC call itself failed — unlock immediately
+      clearStreamTimeout();
+      setIsStreaming(false);
+      streamingChatIdRef.current = null;
+      setSendError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleRetry = () => {
+    setSendError(null);
+    // Re-send the last user message
+    const lastUserMsg = [...messages].reverse().find((m) => !m.is_from_bot);
+    if (lastUserMsg) {
+      setInput(lastUserMsg.content);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -163,6 +241,16 @@ export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
           <div className="message-bubble message-bot">
             <div className="message-content typing-indicator">
               <span></span><span></span><span></span>
+            </div>
+          </div>
+        )}
+
+        {/* Error bubble */}
+        {sendError && (
+          <div className="message-bubble message-error">
+            <div className="message-content">
+              <p>{sendError}</p>
+              <button className="btn-retry" onClick={handleRetry}>Retry</button>
             </div>
           </div>
         )}

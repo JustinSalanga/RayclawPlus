@@ -1069,3 +1069,85 @@ body {
 .sidebar-dropdown-danger:hover {
   background: #fdf2f0;
 }
+
+/* ---- Error message bubble ---- */
+
+.message-error {
+  align-self: flex-start;
+  background: #fdf2f0;
+  border: 1px solid var(--error);
+  color: var(--error);
+  border-radius: 12px;
+  border-bottom-left-radius: 4px;
+}
+
+.message-error .message-content p {
+  margin-bottom: 8px;
+}
+
+.btn-retry {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 14px;
+  background: var(--error);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.btn-retry:hover {
+  opacity: 0.85;
+}
+
+/* ---- Error Boundary ---- */
+
+.error-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background: var(--paper);
+  padding: 32px;
+}
+
+.error-boundary-card {
+  max-width: 480px;
+  width: 100%;
+}
+
+.error-boundary-card h1 {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--error);
+  margin-bottom: 8px;
+}
+
+.error-boundary-desc {
+  font-size: 14px;
+  color: var(--charcoal-light);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+.error-boundary-detail {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: #fdf2f0;
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--error);
+  margin-bottom: 20px;
+  word-break: break-word;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.error-boundary-actions {
+  display: flex;
+  gap: 12px;
+}

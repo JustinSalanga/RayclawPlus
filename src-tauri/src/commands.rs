@@ -38,20 +38,23 @@ pub struct StoredMessageDto {
 #[serde(tag = "type")]
 pub enum AgentStreamPayload {
     #[serde(rename = "iteration")]
-    Iteration { iteration: usize },
+    Iteration { chat_id: i64, iteration: usize },
     #[serde(rename = "tool_start")]
-    ToolStart { name: String },
+    ToolStart { chat_id: i64, name: String },
     #[serde(rename = "tool_result")]
     ToolResult {
+        chat_id: i64,
         name: String,
         is_error: bool,
         preview: String,
         duration_ms: u64,
     },
     #[serde(rename = "text_delta")]
-    TextDelta { delta: String },
+    TextDelta { chat_id: i64, delta: String },
     #[serde(rename = "final_response")]
-    FinalResponse { text: String },
+    FinalResponse { chat_id: i64, text: String },
+    #[serde(rename = "error")]
+    Error { chat_id: i64, message: String },
 }
 
 /// Configuration DTO for the settings UI.
@@ -564,15 +567,18 @@ pub async fn send_message(
     rt_handle.spawn(async move {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let app_handle = app.clone();
+        let emit_app = app_handle.clone();
+        let emit_chat_id = chat_id;
 
         let fwd = tokio::spawn(async move {
             use rayclaw::agent_engine::AgentEvent;
             while let Some(event) = rx.recv().await {
+                let cid = emit_chat_id;
                 let payload = match event {
                     AgentEvent::Iteration { iteration } => {
-                        AgentStreamPayload::Iteration { iteration }
+                        AgentStreamPayload::Iteration { chat_id: cid, iteration }
                     }
-                    AgentEvent::ToolStart { name } => AgentStreamPayload::ToolStart { name },
+                    AgentEvent::ToolStart { name } => AgentStreamPayload::ToolStart { chat_id: cid, name },
                     AgentEvent::ToolResult {
                         name,
                         is_error,
@@ -580,17 +586,18 @@ pub async fn send_message(
                         duration_ms,
                         ..
                     } => AgentStreamPayload::ToolResult {
+                        chat_id: cid,
                         name,
                         is_error,
                         preview,
                         duration_ms: duration_ms as u64,
                     },
-                    AgentEvent::TextDelta { delta } => AgentStreamPayload::TextDelta { delta },
+                    AgentEvent::TextDelta { delta } => AgentStreamPayload::TextDelta { chat_id: cid, delta },
                     AgentEvent::FinalResponse { text } => {
-                        AgentStreamPayload::FinalResponse { text }
+                        AgentStreamPayload::FinalResponse { chat_id: cid, text }
                     }
                 };
-                let _ = app_handle.emit("agent-stream", &payload);
+                let _ = emit_app.emit("agent-stream", &payload);
             }
         });
 
@@ -622,7 +629,13 @@ pub async fn send_message(
                     store_bot_message(&state, chat_id, text);
                 }
             }
-            Err(e) => error!("send_message: agent error: {e}"),
+            Err(e) => {
+                error!("send_message: agent error: {e}");
+                let _ = app_handle.emit("agent-stream", &AgentStreamPayload::Error {
+                    chat_id,
+                    message: e.to_string(),
+                });
+            }
         }
 
         let _ = fwd.await;

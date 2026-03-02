@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { MoreHorizontal, FileDown, Trash2 } from "lucide-react";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save, confirm } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { ChatSummary } from "../types";
 import { channelLabel } from "../types";
@@ -46,6 +46,11 @@ export default function Sidebar({
   const handleDelete = async (chatId: number) => {
     setMenuChatId(null);
     try {
+      const ok = await confirm("Are you sure you want to delete this chat? This action cannot be undone.", {
+        title: "Delete Chat",
+        kind: "warning",
+      });
+      if (!ok) return;
       await deleteChat(chatId);
       onChatDeleted();
     } catch (err) {
