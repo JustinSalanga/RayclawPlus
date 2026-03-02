@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { getConfig, saveConfig, getChannelStatus, toggleChannel, listSkills, getSkill, saveSkill, deleteSkill, readSoul, saveSoul, listMemories, searchMemories, updateMemory, archiveMemory, deleteMemory, getMemoryObservability, getUsageSummary, getUsageByModel, listScheduledTasks, updateTaskStatus, deleteScheduledTask, getTaskRunLogs } from "../lib/tauri-api";
-import type { ConfigDto, ChannelStatus, SkillDto, SkillDetailDto, MemoryDto, MemoryObservabilityDto, UsageSummaryDto, ModelUsageDto, ScheduledTaskDto, TaskRunLogDto } from "../types";
+import { getConfig, saveConfig, getChannelStatus, toggleChannel, listSkills, getSkill, saveSkill, deleteSkill, readSoul, saveSoul, listMemories, searchMemories, updateMemory, archiveMemory, deleteMemory, getMemoryObservability, getUsageSummary, getUsageByModel, listScheduledTasks, updateTaskStatus, deleteScheduledTask, getTaskRunLogs, getChats } from "../lib/tauri-api";
+import type { ConfigDto, ChannelStatus, SkillDto, SkillDetailDto, MemoryDto, MemoryObservabilityDto, UsageSummaryDto, ModelUsageDto, ScheduledTaskDto, TaskRunLogDto, ChatSummary } from "../types";
 
 const PROVIDERS = [
   "anthropic",
@@ -142,6 +142,7 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
   // Scheduler state
   const [schedulerChatId, setSchedulerChatId] = useState<number>(0);
+  const [schedulerChats, setSchedulerChats] = useState<ChatSummary[]>([]);
   const [schedulerTasks, setSchedulerTasks] = useState<ScheduledTaskDto[]>([]);
   const [taskLogs, setTaskLogs] = useState<TaskRunLogDto[]>([]);
   const [viewingTaskId, setViewingTaskId] = useState<number | null>(null);
@@ -272,7 +273,10 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   }, [schedulerChatId]);
 
   useEffect(() => {
-    if (activeTab === "scheduler") fetchTasks();
+    if (activeTab === "scheduler") {
+      getChats().then(setSchedulerChats).catch(() => {});
+      fetchTasks();
+    }
   }, [activeTab, fetchTasks]);
 
   const handleBack = () => {
@@ -1012,13 +1016,18 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
               <h2>Scheduled Tasks</h2>
 
               <label className="settings-field">
-                <span>Chat ID</span>
-                <input
-                  type="number"
+                <span>Chat</span>
+                <select
                   value={schedulerChatId || ""}
                   onChange={(e) => setSchedulerChatId(Number(e.target.value) || 0)}
-                  placeholder="Enter chat ID to view tasks"
-                />
+                >
+                  <option value="">Select a chat...</option>
+                  {schedulerChats.map((c) => (
+                    <option key={c.chat_id} value={c.chat_id}>
+                      {c.chat_title || `Chat #${c.chat_id}`} — {c.chat_type}
+                    </option>
+                  ))}
+                </select>
               </label>
               {schedulerChatId > 0 && (
                 <button className="btn-save" style={{ fontSize: 12, padding: "4px 12px", marginBottom: 12 }} onClick={fetchTasks}>
