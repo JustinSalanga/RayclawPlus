@@ -1,11 +1,13 @@
 import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Copy, Check, Bot } from "lucide-react";
+import { Copy, Check, Bot, ChevronDown, ChevronUp } from "lucide-react";
 import type { StoredMessage } from "../types";
 
 interface MessageBubbleProps {
   message: StoredMessage;
+  isSearchMatch?: boolean;
+  isCurrentMatch?: boolean;
 }
 
 function CodeBlock({ className, children }: { className?: string; children: React.ReactNode }) {
@@ -32,15 +34,30 @@ function CodeBlock({ className, children }: { className?: string; children: Reac
   );
 }
 
-export default function MessageBubble({ message }: MessageBubbleProps) {
+const COLLAPSE_LINE_THRESHOLD = 30;
+
+export default function MessageBubble({ message, isSearchMatch, isCurrentMatch }: MessageBubbleProps) {
   const isBot = message.is_from_bot;
   const time = new Date(message.timestamp).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
   });
 
+  const lineCount = message.content.split("\n").length;
+  const isLong = isBot && lineCount > COLLAPSE_LINE_THRESHOLD;
+  const [collapsed, setCollapsed] = useState(isLong);
+
+  const matchClass = isCurrentMatch
+    ? "message-search-current"
+    : isSearchMatch
+      ? "message-search-match"
+      : "";
+
   return (
-    <div className={`message-bubble ${isBot ? "message-bot" : "message-user"}`}>
+    <div
+      id={`msg-${message.id}`}
+      className={`message-bubble ${isBot ? "message-bot" : "message-user"} ${matchClass}`}
+    >
       {isBot && (
         <div className="message-sender">
           <span className="message-sender-avatar"><Bot size={12} /></span>
@@ -52,7 +69,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           {message.sender_name}
         </div>
       )}
-      <div className="message-content">
+      <div className={`message-content ${isLong && collapsed ? "message-content-collapsed" : ""}`}>
         {isBot ? (
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -73,6 +90,15 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           <p>{message.content}</p>
         )}
       </div>
+      {isLong && (
+        <button className="btn-collapse-toggle" onClick={() => setCollapsed(!collapsed)}>
+          {collapsed ? (
+            <><ChevronDown size={14} /> Show more</>
+          ) : (
+            <><ChevronUp size={14} /> Show less</>
+          )}
+        </button>
+      )}
       <span className="message-time">{time}</span>
     </div>
   );

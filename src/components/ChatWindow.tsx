@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import MessageBubble from "./MessageBubble";
 import ToolStep from "./ToolStep";
-import { MessageSquarePlus, Settings } from "lucide-react";
-import { sendMessage, getHistory, onAgentStream } from "../lib/tauri-api";
+import { MessageSquarePlus, Settings, X, ChevronUp, ChevronDown } from "lucide-react";
+import { sendMessage, getHistory, onAgentStream, renameChat } from "../lib/tauri-api";
 import { inferChannel, channelLabel } from "../types";
 import type { StoredMessage, AgentStreamEvent } from "../types";
 
@@ -14,17 +14,37 @@ interface ToolStepData {
   durationMs?: number;
 }
 
+interface FileAttachment {
+  name: string;
+  type: string;
+  dataUrl: string;
+  size: number;
+}
+
 interface ChatWindowProps {
   chatId: number | null;
   chatTitle: string | null;
   chatType?: string;
   onNewChat?: () => void;
   onOpenSettings?: () => void;
+  onTitleChanged?: () => void;
+  searchOpen?: boolean;
+  onSearchClose?: () => void;
 }
 
 const STREAM_TIMEOUT_MS = 90_000; // 90s no event → auto-unlock
+const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024; // 5MB
 
-export default function ChatWindow({ chatId, chatTitle, chatType, onNewChat, onOpenSettings }: ChatWindowProps) {
+export default function ChatWindow({
+  chatId,
+  chatTitle,
+  chatType,
+  onNewChat,
+  onOpenSettings,
+  onTitleChanged,
+  searchOpen: searchOpenProp,
+  onSearchClose,
+}: ChatWindowProps) {
   const channel = chatType ? inferChannel(chatType) : "desktop";
   const isReadOnly = channel !== "desktop";
   const badge = chatType ? channelLabel(chatType) : null;
@@ -40,6 +60,79 @@ export default function ChatWindow({ chatId, chatTitle, chatType, onNewChat, onO
   const streamTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamingChatIdRef = useRef<number | null>(null);
 
+  // Title editing
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const titleInputRef = useRef<HTMLInputElement>(null);
+
+  // Message search
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // File attachments
+  const [attachments, setAttachments] = useState<FileAttachment[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+
+  // Sync search open from prop
+  useEffect(() => {
+    if (searchOpenProp) {
+      setSearchOpen(true);
+    }
+  }, [searchOpenProp]);
+
+  // Focus search input when opened
+  useEffect(() => {
+    if (searchOpen) {
+      setTimeout(() => searchInputRef.current?.focus(), 50);
+    } else {
+      setSearchQuery("");
+      setCurrentMatchIdx(0);
+    }
+  }, [searchOpen]);
+
+  // Focus title input when editing
+  useEffect(() => {
+    if (isEditingTitle) titleInputRef.current?.focus();
+  }, [isEditingTitle]);
+
+  // Search matches
+  const searchMatches = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.toLowerCase();
+    return messages
+      .map((m, i) => (m.content.toLowerCase().includes(q) ? i : -1))
+      .filter((i) => i !== -1);
+  }, [messages, searchQuery]);
+
+  // Scroll to current match
+  useEffect(() => {
+    if (searchMatches.length === 0) return;
+    const msgIdx = searchMatches[currentMatchIdx];
+    if (msgIdx === undefined) return;
+    const msg = messages[msgIdx];
+    if (msg) {
+      const el = document.getElementById(`msg-${msg.id}`);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [currentMatchIdx, searchMatches, messages]);
+
+  const navigateMatch = (dir: number) => {
+    if (searchMatches.length === 0) return;
+    setCurrentMatchIdx((prev) => {
+      const next = prev + dir;
+      if (next < 0) return searchMatches.length - 1;
+      if (next >= searchMatches.length) return 0;
+      return next;
+    });
+  };
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    onSearchClose?.();
+  };
+
   // Keep chatIdRef in sync
   useEffect(() => {
     chatIdRef.current = chatId;
@@ -52,13 +145,13 @@ export default function ChatWindow({ chatId, chatTitle, chatType, onNewChat, onO
   // Reset streaming state when switching chats
   useEffect(() => {
     setSendError(null);
+    setSearchOpen(false);
+    setAttachments([]);
     if (streamingChatIdRef.current !== chatId) {
-      // Switching to a non-streaming chat — clear everything
       setIsStreaming(false);
       setStreamingText("");
       setToolSteps([]);
     }
-    // If switching back to the streaming chat, keep streamingText/toolSteps intact
   }, [chatId]);
 
   // Load history when chat changes
@@ -94,8 +187,6 @@ export default function ChatWindow({ chatId, chatTitle, chatType, onNewChat, onO
   useEffect(() => {
     const unlistenPromise = onAgentStream((event: AgentStreamEvent) => {
       const eventChatId = event.chat_id;
-
-      // Only process events for the currently viewed chat
       if (eventChatId !== chatIdRef.current) return;
 
       resetStreamTimeout();
@@ -138,6 +229,19 @@ export default function ChatWindow({ chatId, chatTitle, chatType, onNewChat, onO
                 setStreamingText("");
                 setIsStreaming(false);
                 setTimeout(scrollToBottom, 50);
+
+                // Auto-title: if title is "New Chat", derive from first user message
+                if (chatTitle === "New Chat" && msgs.length >= 2) {
+                  const firstUserMsg = msgs.find((m) => !m.is_from_bot);
+                  if (firstUserMsg) {
+                    const autoTitle =
+                      firstUserMsg.content.slice(0, 30).trim() +
+                      (firstUserMsg.content.length > 30 ? "..." : "");
+                    renameChat(currentChatId, autoTitle).then(() => {
+                      onTitleChanged?.();
+                    }).catch(() => {});
+                  }
+                }
               }).catch(() => {
                 setIsStreaming(false);
               });
@@ -154,13 +258,62 @@ export default function ChatWindow({ chatId, chatTitle, chatType, onNewChat, onO
       unlistenPromise.then((fn) => fn());
       clearStreamTimeout();
     };
-  }, [scrollToBottom, resetStreamTimeout, clearStreamTimeout]);
+  }, [scrollToBottom, resetStreamTimeout, clearStreamTimeout, chatTitle, onTitleChanged]);
+
+  // File processing
+  const processFiles = (files: File[]) => {
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue;
+      if (file.size > MAX_ATTACHMENT_SIZE) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        setAttachments((prev) => [
+          ...prev,
+          { name: file.name, type: file.type, dataUrl: reader.result as string, size: file.size },
+        ]);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (!isReadOnly) setDragOver(true);
+  };
+  const handleDragLeave = () => setDragOver(false);
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (isReadOnly) return;
+    processFiles(Array.from(e.dataTransfer.files));
+  };
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData.items);
+    const imageItems = items.filter((i) => i.type.startsWith("image/"));
+    if (imageItems.length > 0) {
+      e.preventDefault();
+      for (const item of imageItems) {
+        const file = item.getAsFile();
+        if (file) processFiles([file]);
+      }
+    }
+  };
+  const removeAttachment = (idx: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== idx));
+  };
 
   const handleSend = async () => {
     if (!input.trim() || !chatId || isStreaming) return;
 
-    const userText = input.trim();
+    let userText = input.trim();
+    // Append attachment notes
+    if (attachments.length > 0) {
+      const names = attachments.map((a) => `[Attached: ${a.name}]`).join(" ");
+      userText = `${userText}\n${names}`;
+    }
+
     setInput("");
+    setAttachments([]);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     setIsStreaming(true);
     setStreamingText("");
@@ -169,7 +322,6 @@ export default function ChatWindow({ chatId, chatTitle, chatType, onNewChat, onO
     streamingChatIdRef.current = chatId;
     resetStreamTimeout();
 
-    // Optimistically add user message
     const userMsg: StoredMessage = {
       id: crypto.randomUUID(),
       chat_id: chatId,
@@ -184,7 +336,6 @@ export default function ChatWindow({ chatId, chatTitle, chatType, onNewChat, onO
     try {
       await sendMessage(chatId, userText);
     } catch (err) {
-      // IPC call itself failed — unlock immediately
       clearStreamTimeout();
       setIsStreaming(false);
       streamingChatIdRef.current = null;
@@ -194,7 +345,6 @@ export default function ChatWindow({ chatId, chatTitle, chatType, onNewChat, onO
 
   const handleRetry = () => {
     setSendError(null);
-    // Re-send the last user message
     const lastUserMsg = [...messages].reverse().find((m) => !m.is_from_bot);
     if (lastUserMsg) {
       setInput(lastUserMsg.content);
@@ -205,6 +355,48 @@ export default function ChatWindow({ chatId, chatTitle, chatType, onNewChat, onO
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+  };
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && e.shiftKey) {
+      e.preventDefault();
+      navigateMatch(-1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      navigateMatch(1);
+    } else if (e.key === "Escape") {
+      closeSearch();
+    }
+  };
+
+  // Double-click to rename title
+  const handleTitleDoubleClick = () => {
+    if (isReadOnly || !chatId) return;
+    setEditTitle(chatTitle || "");
+    setIsEditingTitle(true);
+  };
+
+  const handleTitleConfirm = async () => {
+    if (!chatId || !editTitle.trim()) {
+      setIsEditingTitle(false);
+      return;
+    }
+    try {
+      await renameChat(chatId, editTitle.trim());
+      onTitleChanged?.();
+    } catch {
+      // ignore
+    }
+    setIsEditingTitle(false);
+  };
+
+  const handleTitleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleTitleConfirm();
+    } else if (e.key === "Escape") {
+      setIsEditingTitle(false);
     }
   };
 
@@ -236,19 +428,69 @@ export default function ChatWindow({ chatId, chatTitle, chatType, onNewChat, onO
   }
 
   return (
-    <main className="chat-window">
+    <main
+      className={`chat-window ${dragOver ? "chat-window-drag-over" : ""}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div className="chat-header">
-        <span className="chat-header-title">
-          {badge && <span className="channel-badge">{badge}</span>}
-          {chatTitle || `Chat ${chatId}`}
-        </span>
+        {isEditingTitle ? (
+          <input
+            ref={titleInputRef}
+            className="chat-header-title-input"
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            onBlur={handleTitleConfirm}
+            onKeyDown={handleTitleKeyDown}
+          />
+        ) : (
+          <span className="chat-header-title" onDoubleClick={handleTitleDoubleClick}>
+            {badge && <span className="channel-badge">{badge}</span>}
+            {chatTitle || `Chat ${chatId}`}
+          </span>
+        )}
         {isReadOnly && (
           <span className="chat-header-readonly">View only</span>
         )}
       </div>
+
+      {/* Message search bar */}
+      {searchOpen && (
+        <div className="chat-search-bar">
+          <input
+            ref={searchInputRef}
+            className="chat-search-input"
+            value={searchQuery}
+            onChange={(e) => { setSearchQuery(e.target.value); setCurrentMatchIdx(0); }}
+            onKeyDown={handleSearchKeyDown}
+            placeholder="Search messages..."
+          />
+          <span className="chat-search-count">
+            {searchMatches.length > 0
+              ? `${currentMatchIdx + 1}/${searchMatches.length}`
+              : searchQuery ? "0 results" : ""}
+          </span>
+          <button className="chat-search-nav" onClick={() => navigateMatch(-1)} title="Previous">
+            <ChevronUp size={14} />
+          </button>
+          <button className="chat-search-nav" onClick={() => navigateMatch(1)} title="Next">
+            <ChevronDown size={14} />
+          </button>
+          <button className="chat-search-close" onClick={closeSearch}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       <div className="chat-messages">
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
+        {messages.map((msg, idx) => (
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            isSearchMatch={searchMatches.includes(idx)}
+            isCurrentMatch={searchMatches[currentMatchIdx] === idx}
+          />
         ))}
 
         {/* Tool steps during streaming */}
@@ -292,30 +534,47 @@ export default function ChatWindow({ chatId, chatTitle, chatType, onNewChat, onO
       </div>
 
       {!isReadOnly && (
-        <div className="chat-input-area">
-          <textarea
-            ref={textareaRef}
-            className="chat-input"
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              const el = e.target;
-              el.style.height = "auto";
-              el.style.height = Math.min(el.scrollHeight, 160) + "px";
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message..."
-            rows={1}
-            disabled={isStreaming}
-          />
-          <button
-            className="btn-send"
-            onClick={handleSend}
-            disabled={!input.trim() || isStreaming}
-          >
-            Send
-          </button>
-        </div>
+        <>
+          {/* Attachment preview */}
+          {attachments.length > 0 && (
+            <div className="attachment-preview-bar">
+              {attachments.map((att, i) => (
+                <div key={i} className="attachment-preview">
+                  <img src={att.dataUrl} alt={att.name} className="attachment-thumb" />
+                  <span className="attachment-name">{att.name}</span>
+                  <button className="attachment-remove" onClick={() => removeAttachment(i)}>
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="chat-input-area">
+            <textarea
+              ref={textareaRef}
+              className="chat-input"
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                const el = e.target;
+                el.style.height = "auto";
+                el.style.height = Math.min(el.scrollHeight, 160) + "px";
+              }}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              placeholder="Type a message..."
+              rows={1}
+              disabled={isStreaming}
+            />
+            <button
+              className="btn-send"
+              onClick={handleSend}
+              disabled={!input.trim() || isStreaming}
+            >
+              Send
+            </button>
+          </div>
+        </>
       )}
     </main>
   );

@@ -743,6 +743,22 @@ pub async fn export_chat_markdown(
 }
 
 #[tauri::command]
+pub async fn rename_chat(
+    app: tauri::AppHandle,
+    chat_id: i64,
+    title: String,
+) -> Result<(), String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    info!("rename_chat: chat_id={chat_id}, title={title}");
+    state
+        .db
+        .upsert_chat(chat_id, Some(&title), "desktop")
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn new_chat(app: tauri::AppHandle) -> Result<i64, String> {
     let desktop = app.state::<DesktopState>();
     let state = require_state(&desktop).await?;

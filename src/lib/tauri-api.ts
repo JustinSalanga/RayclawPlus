@@ -42,6 +42,10 @@ export async function newChat(): Promise<number> {
   return invoke("new_chat");
 }
 
+export async function renameChat(chatId: number, title: string): Promise<void> {
+  return invoke("rename_chat", { chatId, title });
+}
+
 export async function deleteChat(chatId: number): Promise<void> {
   return invoke("delete_chat", { chatId });
 }

@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useMemo } from "react";
-import { MoreHorizontal, FileDown, Trash2, Search, X } from "lucide-react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { MoreHorizontal, FileDown, Trash2, Search, X, Pin } from "lucide-react";
 import { save, confirm } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { ChatSummary } from "../types";
@@ -13,6 +13,10 @@ interface SidebarProps {
   onNewChat: () => void;
   onOpenSettings: () => void;
   onChatDeleted: () => void;
+  width: number;
+  onWidthChange: (w: number) => void;
+  pinnedChatIds?: Set<number>;
+  onTogglePin?: (chatId: number) => void;
 }
 
 function relativeTime(isoString: string): string {
@@ -39,12 +43,37 @@ export default function Sidebar({
   onNewChat,
   onOpenSettings,
   onChatDeleted,
+  width,
+  onWidthChange,
+  pinnedChatIds,
+  onTogglePin,
 }: SidebarProps) {
   const [menuChatId, setMenuChatId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  // Resize handle drag logic
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = width;
+    const onMove = (ev: MouseEvent) => {
+      const newW = Math.min(400, Math.max(200, startW + ev.clientX - startX));
+      onWidthChange(newW);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [width, onWidthChange]);
 
   // Close menu on click outside
   useEffect(() => {
@@ -129,8 +158,87 @@ export default function Sidebar({
     }
   };
 
+  // Split into pinned + grouped for rendering
+  const pinned = pinnedChatIds ? filteredChats.filter((c) => pinnedChatIds.has(c.chat_id)) : [];
+  const unpinned = pinnedChatIds ? filteredChats.filter((c) => !pinnedChatIds.has(c.chat_id)) : filteredChats;
+
+  // Group unpinned by channel
+  const grouped = useMemo(() => {
+    const map = new Map<string, ChatSummary[]>();
+    for (const c of unpinned) {
+      const ch = inferChannel(c.chat_type);
+      if (!map.has(ch)) map.set(ch, []);
+      map.get(ch)!.push(c);
+    }
+    return map;
+  }, [unpinned]);
+
+  const showGroupHeaders = grouped.size > 1;
+
+  const renderChatItem = (chat: ChatSummary) => {
+    const badge = channelLabel(chat.chat_type);
+    const isMenuOpen = menuChatId === chat.chat_id;
+    const timeLabel = relativeTime(chat.last_message_time);
+    const isPinned = pinnedChatIds?.has(chat.chat_id);
+    return (
+      <div
+        key={chat.chat_id}
+        className={`sidebar-item ${chat.chat_id === activeChatId ? "sidebar-item-active" : ""}`}
+        onClick={() => onSelectChat(chat.chat_id)}
+      >
+        <div className="sidebar-item-row">
+          <div className="sidebar-item-title">
+            {badge && <span className="channel-badge">{badge}</span>}
+            {chat.chat_title || `Chat ${chat.chat_id}`}
+          </div>
+          <span className="sidebar-item-time">{timeLabel}</span>
+          <button
+            className="sidebar-item-more"
+            onClick={(e) => toggleMenu(e, chat.chat_id)}
+            title="More"
+          >
+            <MoreHorizontal size={14} />
+          </button>
+        </div>
+        {chat.last_message_preview && (
+          <div className="sidebar-item-preview">
+            {chat.last_message_preview.slice(0, 60)}
+          </div>
+        )}
+
+        {isMenuOpen && (
+          <div ref={menuRef} className="sidebar-dropdown" onClick={(e) => e.stopPropagation()}>
+            {onTogglePin && (
+              <button
+                className="sidebar-dropdown-item"
+                onClick={() => { onTogglePin(chat.chat_id); setMenuChatId(null); }}
+              >
+                <Pin size={14} />
+                {isPinned ? "Unpin" : "Pin to top"}
+              </button>
+            )}
+            <button
+              className="sidebar-dropdown-item"
+              onClick={() => handleExport(chat.chat_id)}
+            >
+              <FileDown size={14} />
+              Export as Markdown
+            </button>
+            <button
+              className="sidebar-dropdown-item sidebar-dropdown-danger"
+              onClick={() => handleDelete(chat.chat_id)}
+            >
+              <Trash2 size={14} />
+              Delete Chat
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" style={{ width, minWidth: width }}>
       <div className="sidebar-header">
         <h2>RayClaw</h2>
         <div className="sidebar-header-actions">
@@ -166,57 +274,25 @@ export default function Sidebar({
       )}
 
       <div className="sidebar-list">
-        {filteredChats.map((chat) => {
-          const badge = channelLabel(chat.chat_type);
-          const isMenuOpen = menuChatId === chat.chat_id;
-          const timeLabel = relativeTime(chat.last_message_time);
-          return (
-            <div
-              key={chat.chat_id}
-              className={`sidebar-item ${chat.chat_id === activeChatId ? "sidebar-item-active" : ""}`}
-              onClick={() => onSelectChat(chat.chat_id)}
-            >
-              <div className="sidebar-item-row">
-                <div className="sidebar-item-title">
-                  {badge && <span className="channel-badge">{badge}</span>}
-                  {chat.chat_title || `Chat ${chat.chat_id}`}
-                </div>
-                <span className="sidebar-item-time">{timeLabel}</span>
-                <button
-                  className="sidebar-item-more"
-                  onClick={(e) => toggleMenu(e, chat.chat_id)}
-                  title="More"
-                >
-                  <MoreHorizontal size={14} />
-                </button>
-              </div>
-              {chat.last_message_preview && (
-                <div className="sidebar-item-preview">
-                  {chat.last_message_preview.slice(0, 60)}
-                </div>
-              )}
+        {/* Pinned section */}
+        {pinned.length > 0 && (
+          <>
+            <div className="sidebar-group-header">Pinned</div>
+            {pinned.map(renderChatItem)}
+          </>
+        )}
 
-              {isMenuOpen && (
-                <div ref={menuRef} className="sidebar-dropdown" onClick={(e) => e.stopPropagation()}>
-                  <button
-                    className="sidebar-dropdown-item"
-                    onClick={() => handleExport(chat.chat_id)}
-                  >
-                    <FileDown size={14} />
-                    Export as Markdown
-                  </button>
-                  <button
-                    className="sidebar-dropdown-item sidebar-dropdown-danger"
-                    onClick={() => handleDelete(chat.chat_id)}
-                  >
-                    <Trash2 size={14} />
-                    Delete Chat
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {/* Grouped unpinned */}
+        {showGroupHeaders
+          ? Array.from(grouped.entries()).map(([channel, items]) => (
+              <div key={channel}>
+                <div className="sidebar-group-header">{channel}</div>
+                {items.map(renderChatItem)}
+              </div>
+            ))
+          : unpinned.map(renderChatItem)
+        }
+
         {filteredChats.length === 0 && chats.length > 0 && (
           <div className="sidebar-empty">No matching chats</div>
         )}
@@ -229,6 +305,7 @@ export default function Sidebar({
           Settings
         </button>
       </div>
+      <div className="sidebar-resize-handle" onMouseDown={handleResizeStart} />
     </aside>
   );
 }
