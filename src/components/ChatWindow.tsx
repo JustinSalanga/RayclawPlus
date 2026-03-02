@@ -3,7 +3,7 @@ import MessageBubble from "./MessageBubble";
 import ToolStep from "./ToolStep";
 import { MessageSquarePlus, Settings } from "lucide-react";
 import { sendMessage, getHistory, onAgentStream } from "../lib/tauri-api";
-import { inferChannel } from "../types";
+import { inferChannel, channelLabel } from "../types";
 import type { StoredMessage, AgentStreamEvent } from "../types";
 
 interface ToolStepData {
@@ -16,6 +16,7 @@ interface ToolStepData {
 
 interface ChatWindowProps {
   chatId: number | null;
+  chatTitle: string | null;
   chatType?: string;
   onNewChat?: () => void;
   onOpenSettings?: () => void;
@@ -23,9 +24,10 @@ interface ChatWindowProps {
 
 const STREAM_TIMEOUT_MS = 90_000; // 90s no event → auto-unlock
 
-export default function ChatWindow({ chatId, chatType, onNewChat, onOpenSettings }: ChatWindowProps) {
+export default function ChatWindow({ chatId, chatTitle, chatType, onNewChat, onOpenSettings }: ChatWindowProps) {
   const channel = chatType ? inferChannel(chatType) : "desktop";
   const isReadOnly = channel !== "desktop";
+  const badge = chatType ? channelLabel(chatType) : null;
   const [messages, setMessages] = useState<StoredMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -209,6 +211,7 @@ export default function ChatWindow({ chatId, chatType, onNewChat, onOpenSettings
   if (chatId === null) {
     return (
       <main className="chat-window chat-window-empty">
+        <div className="chat-header" />
         <div className="chat-empty-state">
           <div className="empty-state-icon">RC</div>
           <h2>Welcome to RayClaw</h2>
@@ -234,6 +237,15 @@ export default function ChatWindow({ chatId, chatType, onNewChat, onOpenSettings
 
   return (
     <main className="chat-window">
+      <div className="chat-header">
+        <span className="chat-header-title">
+          {badge && <span className="channel-badge">{badge}</span>}
+          {chatTitle || `Chat ${chatId}`}
+        </span>
+        {isReadOnly && (
+          <span className="chat-header-readonly">View only</span>
+        )}
+      </div>
       <div className="chat-messages">
         {messages.map((msg) => (
           <MessageBubble key={msg.id} message={msg} />
@@ -279,11 +291,7 @@ export default function ChatWindow({ chatId, chatType, onNewChat, onOpenSettings
         <div ref={messagesEndRef} />
       </div>
 
-      {isReadOnly ? (
-        <div className="chat-readonly-bar">
-          This conversation is from <strong>{channel}</strong>. View only.
-        </div>
-      ) : (
+      {!isReadOnly && (
         <div className="chat-input-area">
           <textarea
             ref={textareaRef}
