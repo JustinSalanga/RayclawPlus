@@ -407,6 +407,10 @@ pub fn run() {
             commands::rename_chat,
             commands::delete_chat,
             commands::export_chat_markdown,
+            commands::list_skills,
+            commands::get_skill,
+            commands::save_skill,
+            commands::delete_skill,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

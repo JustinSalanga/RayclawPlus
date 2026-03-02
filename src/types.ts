@@ -109,6 +109,23 @@ export function channelLabel(chatType: string): string | null {
   }
 }
 
+export interface SkillDto {
+  name: string;
+  description: string;
+  platforms: string[];
+  deps: string[];
+  source: string;
+  version: string | null;
+  updated_at: string | null;
+  available: boolean;
+  unavailable_reason: string | null;
+}
+
+export interface SkillDetailDto {
+  meta: SkillDto;
+  content: string;
+}
+
 export type AgentStreamEvent =
   | { type: "iteration"; chat_id: number; iteration: number }
   | { type: "tool_start"; chat_id: number; name: string }

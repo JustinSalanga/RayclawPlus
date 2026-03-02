@@ -789,6 +789,165 @@ pub async fn rename_chat(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Commands: Skills
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillDto {
+    pub name: String,
+    pub description: String,
+    pub platforms: Vec<String>,
+    pub deps: Vec<String>,
+    pub source: String,
+    pub version: Option<String>,
+    pub updated_at: Option<String>,
+    pub available: bool,
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillDetailDto {
+    pub meta: SkillDto,
+    pub content: String, // SKILL.md body (Markdown)
+}
+
+#[tauri::command]
+pub async fn list_skills(app: tauri::AppHandle) -> Result<Vec<SkillDto>, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let all = state.skills.discover_all_skills();
+    Ok(all
+        .into_iter()
+        .map(|info| SkillDto {
+            name: info.metadata.name,
+            description: info.metadata.description,
+            platforms: info.metadata.platforms,
+            deps: info.metadata.deps,
+            source: info.metadata.source,
+            version: info.metadata.version,
+            updated_at: info.metadata.updated_at,
+            available: info.available,
+            unavailable_reason: info.unavailable_reason,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn get_skill(app: tauri::AppHandle, name: String) -> Result<SkillDetailDto, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let all = state.skills.discover_all_skills();
+    let info = all.into_iter().find(|i| i.metadata.name == name)
+        .ok_or_else(|| format!("Skill '{name}' not found"))?;
+
+    // Read the SKILL.md body
+    let skill_md = info.metadata.dir_path.join("SKILL.md");
+    let raw = std::fs::read_to_string(&skill_md)
+        .map_err(|e| format!("Failed to read SKILL.md: {e}"))?;
+
+    // Extract body after frontmatter
+    let body = extract_skill_body(&raw);
+
+    Ok(SkillDetailDto {
+        meta: SkillDto {
+            name: info.metadata.name,
+            description: info.metadata.description,
+            platforms: info.metadata.platforms,
+            deps: info.metadata.deps,
+            source: info.metadata.source,
+            version: info.metadata.version,
+            updated_at: info.metadata.updated_at,
+            available: info.available,
+            unavailable_reason: info.unavailable_reason,
+        },
+        content: body,
+    })
+}
+
+#[tauri::command]
+pub async fn save_skill(
+    app: tauri::AppHandle,
+    name: String,
+    description: String,
+    platforms: Vec<String>,
+    deps: Vec<String>,
+    content: String,
+) -> Result<(), String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let skills_dir = state.skills.skills_dir();
+
+    // Validate name: alphanumeric, hyphens, underscores only
+    if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        return Err("Skill name must be non-empty and contain only letters, digits, hyphens, or underscores.".into());
+    }
+
+    let skill_dir = skills_dir.join(&name);
+    std::fs::create_dir_all(&skill_dir)
+        .map_err(|e| format!("Failed to create skill directory: {e}"))?;
+
+    // Build SKILL.md with YAML frontmatter
+    let mut md = String::from("---\n");
+    md.push_str(&format!("name: {name}\n"));
+    md.push_str(&format!("description: \"{}\"\n", description.replace('"', "\\\"")));
+    if !platforms.is_empty() {
+        md.push_str(&format!("platforms: [{}]\n", platforms.join(", ")));
+    }
+    if !deps.is_empty() {
+        md.push_str(&format!("deps: [{}]\n", deps.join(", ")));
+    }
+    md.push_str("source: local\n");
+    md.push_str("---\n");
+    md.push_str(&content);
+
+    let skill_path = skill_dir.join("SKILL.md");
+    std::fs::write(&skill_path, &md)
+        .map_err(|e| format!("Failed to write SKILL.md: {e}"))?;
+
+    info!("save_skill: wrote {}", skill_path.display());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_skill(app: tauri::AppHandle, name: String) -> Result<(), String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let skills_dir = state.skills.skills_dir();
+    let skill_dir = skills_dir.join(&name);
+
+    if !skill_dir.exists() {
+        return Err(format!("Skill '{name}' not found"));
+    }
+
+    // Safety: ensure the path is within skills_dir
+    let canonical_skills = skills_dir.canonicalize().map_err(|e| e.to_string())?;
+    let canonical_skill = skill_dir.canonicalize().map_err(|e| e.to_string())?;
+    if !canonical_skill.starts_with(&canonical_skills) {
+        return Err("Path traversal not allowed".into());
+    }
+
+    std::fs::remove_dir_all(&skill_dir)
+        .map_err(|e| format!("Failed to delete skill: {e}"))?;
+
+    info!("delete_skill: removed {}", skill_dir.display());
+    Ok(())
+}
+
+/// Extract the body content from a SKILL.md (everything after the YAML frontmatter).
+fn extract_skill_body(raw: &str) -> String {
+    let trimmed = raw.trim_start_matches('\u{feff}');
+    if let Some(rest) = trimmed.strip_prefix("---\n") {
+        if let Some(end) = rest.find("\n---\n") {
+            return rest[end + 5..].trim().to_string();
+        }
+        if let Some(end) = rest.find("\n---\r\n") {
+            return rest[end + 6..].trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
 #[tauri::command]
 pub async fn new_chat(app: tauri::AppHandle) -> Result<i64, String> {
     let desktop = app.state::<DesktopState>();

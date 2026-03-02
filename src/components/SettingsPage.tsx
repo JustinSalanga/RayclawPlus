@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { getConfig, saveConfig, getChannelStatus, toggleChannel } from "../lib/tauri-api";
-import type { ConfigDto, ChannelStatus } from "../types";
+import { getConfig, saveConfig, getChannelStatus, toggleChannel, listSkills, getSkill, saveSkill, deleteSkill } from "../lib/tauri-api";
+import type { ConfigDto, ChannelStatus, SkillDto, SkillDetailDto } from "../types";
 
 const PROVIDERS = [
   "anthropic",
@@ -20,6 +20,7 @@ const PROVIDERS = [
 
 type SettingsTab =
   | "provider"
+  | "skills"
   | "session"
   | "paths"
   | "advanced"
@@ -107,6 +108,14 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
     return document.documentElement.getAttribute("data-theme") === "dark";
   });
 
+  // Skills state
+  const [skills, setSkills] = useState<SkillDto[]>([]);
+  const [selectedSkill, setSelectedSkill] = useState<SkillDetailDto | null>(null);
+  const [skillEditing, setSkillEditing] = useState(false);
+  const [skillForm, setSkillForm] = useState({ name: "", description: "", platforms: "", deps: "", content: "" });
+  const [skillSaving, setSkillSaving] = useState(false);
+  const [skillError, setSkillError] = useState<string | null>(null);
+
   const isDirty = config ? JSON.stringify(config) !== initialConfigRef.current : false;
 
   const fetchStatuses = useCallback(() => {
@@ -190,6 +199,77 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
     localStorage.setItem("rayclaw-theme", enabled ? "dark" : "light");
   };
 
+  // Skills handlers
+  const fetchSkills = useCallback(() => {
+    listSkills().then(setSkills).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "skills") fetchSkills();
+  }, [activeTab, fetchSkills]);
+
+  const handleSelectSkill = async (name: string) => {
+    setSkillError(null);
+    setSkillEditing(false);
+    try {
+      const detail = await getSkill(name);
+      setSelectedSkill(detail);
+    } catch (e) {
+      setSkillError(String(e));
+    }
+  };
+
+  const handleNewSkill = () => {
+    setSelectedSkill(null);
+    setSkillEditing(true);
+    setSkillForm({ name: "", description: "", platforms: "", deps: "", content: "" });
+    setSkillError(null);
+  };
+
+  const handleEditSkill = () => {
+    if (!selectedSkill) return;
+    setSkillEditing(true);
+    setSkillForm({
+      name: selectedSkill.meta.name,
+      description: selectedSkill.meta.description,
+      platforms: selectedSkill.meta.platforms.join(", "),
+      deps: selectedSkill.meta.deps.join(", "),
+      content: selectedSkill.content,
+    });
+    setSkillError(null);
+  };
+
+  const handleSaveSkill = async () => {
+    setSkillSaving(true);
+    setSkillError(null);
+    try {
+      const platforms = skillForm.platforms.split(",").map((s) => s.trim()).filter(Boolean);
+      const deps = skillForm.deps.split(",").map((s) => s.trim()).filter(Boolean);
+      await saveSkill(skillForm.name, skillForm.description, platforms, deps, skillForm.content);
+      setSkillEditing(false);
+      fetchSkills();
+      const detail = await getSkill(skillForm.name);
+      setSelectedSkill(detail);
+    } catch (e) {
+      setSkillError(String(e));
+    } finally {
+      setSkillSaving(false);
+    }
+  };
+
+  const handleDeleteSkill = async (name: string) => {
+    if (!window.confirm(`Delete skill "${name}"? This cannot be undone.`)) return;
+    setSkillError(null);
+    try {
+      await deleteSkill(name);
+      setSelectedSkill(null);
+      setSkillEditing(false);
+      fetchSkills();
+    } catch (e) {
+      setSkillError(String(e));
+    }
+  };
+
   const isBedrock = config.llm_provider === "bedrock";
   const isChannelTab = activeTab.startsWith("ch:");
   const runningCount = channelStatuses.filter((s) => s.running).length;
@@ -244,6 +324,14 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
             onClick={() => selectTab("provider")}
           >
             AI Provider
+          </button>
+
+          <button
+            className={`settings-nav-item ${activeTab === "skills" ? "settings-nav-active" : ""}`}
+            onClick={() => { selectTab("skills"); fetchSkills(); }}
+          >
+            Skills
+            {skills.length > 0 && <span className="nav-badge">{skills.length}</span>}
           </button>
 
           <button
@@ -401,6 +489,138 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                     />
                   </label>
                 </>
+              )}
+            </div>
+          )}
+
+          {/* Skills */}
+          {activeTab === "skills" && (
+            <div className="settings-panel-content">
+              <div className="channel-panel-header">
+                <h2>Skills</h2>
+                <div className="channel-panel-status">
+                  <button className="btn-save" style={{ fontSize: 12, padding: "4px 12px" }} onClick={handleNewSkill}>
+                    + New Skill
+                  </button>
+                </div>
+              </div>
+
+              {skillError && <p className="field-error" style={{ marginBottom: 12 }}>{skillError}</p>}
+
+              {/* Skill editor */}
+              {skillEditing && (
+                <div className="skill-editor">
+                  <label className="settings-field">
+                    <span>Name</span>
+                    <input
+                      type="text"
+                      value={skillForm.name}
+                      onChange={(e) => setSkillForm((f) => ({ ...f, name: e.target.value }))}
+                      placeholder="my-skill"
+                      disabled={!!selectedSkill}
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Description</span>
+                    <input
+                      type="text"
+                      value={skillForm.description}
+                      onChange={(e) => setSkillForm((f) => ({ ...f, description: e.target.value }))}
+                      placeholder="What this skill does..."
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Platforms (comma-separated)</span>
+                    <input
+                      type="text"
+                      value={skillForm.platforms}
+                      onChange={(e) => setSkillForm((f) => ({ ...f, platforms: e.target.value }))}
+                      placeholder="linux, darwin, windows (empty = all)"
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Dependencies (comma-separated)</span>
+                    <input
+                      type="text"
+                      value={skillForm.deps}
+                      onChange={(e) => setSkillForm((f) => ({ ...f, deps: e.target.value }))}
+                      placeholder="curl, python3 (empty = none)"
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Instructions (Markdown)</span>
+                    <textarea
+                      className="skill-content-editor"
+                      value={skillForm.content}
+                      onChange={(e) => setSkillForm((f) => ({ ...f, content: e.target.value }))}
+                      rows={12}
+                      placeholder="# How to use this skill&#10;&#10;Step-by-step instructions..."
+                    />
+                  </label>
+                  <div className="skill-editor-actions">
+                    <button className="btn-save" onClick={handleSaveSkill} disabled={skillSaving || !skillForm.name.trim()}>
+                      {skillSaving ? "Saving..." : "Save"}
+                    </button>
+                    <button className="btn-back" onClick={() => setSkillEditing(false)}>Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Skill detail view */}
+              {!skillEditing && selectedSkill && (
+                <div className="skill-detail">
+                  <div className="skill-detail-header">
+                    <h3>{selectedSkill.meta.name}</h3>
+                    <div className="skill-detail-actions">
+                      <button className="btn-back" style={{ fontSize: 12 }} onClick={handleEditSkill}>Edit</button>
+                      <button className="btn-back" style={{ fontSize: 12, color: "var(--error)" }} onClick={() => handleDeleteSkill(selectedSkill.meta.name)}>Delete</button>
+                    </div>
+                  </div>
+                  <p className="skill-description">{selectedSkill.meta.description}</p>
+                  <div className="skill-meta-tags">
+                    {selectedSkill.meta.available
+                      ? <span className="skill-tag skill-tag-available">Available</span>
+                      : <span className="skill-tag skill-tag-unavailable" title={selectedSkill.meta.unavailable_reason ?? ""}>Unavailable</span>
+                    }
+                    <span className="skill-tag">{selectedSkill.meta.source}</span>
+                    {selectedSkill.meta.platforms.length > 0 && (
+                      <span className="skill-tag">{selectedSkill.meta.platforms.join(", ")}</span>
+                    )}
+                    {selectedSkill.meta.deps.length > 0 && (
+                      <span className="skill-tag">deps: {selectedSkill.meta.deps.join(", ")}</span>
+                    )}
+                    {selectedSkill.meta.version && (
+                      <span className="skill-tag">v{selectedSkill.meta.version}</span>
+                    )}
+                  </div>
+                  {selectedSkill.meta.unavailable_reason && (
+                    <p className="skill-unavailable-reason">{selectedSkill.meta.unavailable_reason}</p>
+                  )}
+                  <pre className="skill-content-preview">{selectedSkill.content}</pre>
+                </div>
+              )}
+
+              {/* Skill list */}
+              {!skillEditing && !selectedSkill && (
+                <div className="skill-list">
+                  {skills.length === 0 && (
+                    <p className="settings-hint">No skills found. Click "+ New Skill" to create one.</p>
+                  )}
+                  {skills.map((s) => (
+                    <button
+                      key={s.name}
+                      className={`skill-list-item ${!s.available ? "skill-list-item-unavailable" : ""}`}
+                      onClick={() => handleSelectSkill(s.name)}
+                    >
+                      <div className="skill-list-item-header">
+                        <span className="skill-list-item-name">{s.name}</span>
+                        <span className={`skill-list-item-dot ${s.available ? "skill-dot-available" : "skill-dot-unavailable"}`} />
+                      </div>
+                      <span className="skill-list-item-desc">{s.description.slice(0, 80)}{s.description.length > 80 ? "..." : ""}</span>
+                      <span className="skill-list-item-source">{s.source}</span>
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           )}
