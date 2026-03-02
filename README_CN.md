@@ -18,6 +18,12 @@ RayClaw Desktop 是 [RayClaw](https://github.com/rayclaw/rayclaw) 多频道 AI A
 - **轻量级** — Tauri 使用系统 WebView（~15-30MB），而非打包 Chromium（~200MB+）
 - **多模型支持** — Anthropic、OpenAI 兼容接口、AWS Bedrock、Ollama 等
 
+## 截图
+
+| 聊天界面 | AI 模型设置 | 频道设置 |
+|:-:|:-:|:-:|
+| ![聊天](screenshots/chat-with-claw.png) | ![AI 模型](screenshots/settings-ai-provider.png) | ![频道](screenshots/settings-channel-feishu.png) |
+
 ## 前置条件
 
 - [RayClaw](https://github.com/rayclaw/rayclaw) 已配置（`rayclaw.config.yaml` 含 LLM API key）

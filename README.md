@@ -18,6 +18,12 @@ RayClaw Desktop is a native desktop client for [RayClaw](https://github.com/rayc
 - **Lightweight** — Tauri uses the system WebView (~15-30MB), not bundled Chromium (~200MB+)
 - **Multi-LLM** — Anthropic, OpenAI-compatible, AWS Bedrock, Ollama, and more
 
+## Screenshots
+
+| Chat Interface | AI Provider Settings | Channel Settings |
+|:-:|:-:|:-:|
+| ![Chat](screenshots/chat-with-claw.png) | ![AI Provider](screenshots/settings-ai-provider.png) | ![Channel](screenshots/settings-channel-feishu.png) |
+
 ## Prerequisites
 
 - [RayClaw](https://github.com/rayclaw/rayclaw) configured (`rayclaw.config.yaml` with LLM API key)
