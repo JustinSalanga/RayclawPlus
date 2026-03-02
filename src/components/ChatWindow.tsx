@@ -30,6 +30,7 @@ export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
   const [toolSteps, setToolSteps] = useState<ToolStepData[]>([]);
   const [sendError, setSendError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatIdRef = useRef<number | null>(chatId);
   const streamTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamingChatIdRef = useRef<number | null>(null);
@@ -155,6 +156,7 @@ export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
 
     const userText = input.trim();
     setInput("");
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
     setIsStreaming(true);
     setStreamingText("");
     setToolSteps([]);
@@ -266,9 +268,15 @@ export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
       ) : (
         <div className="chat-input-area">
           <textarea
+            ref={textareaRef}
             className="chat-input"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              const el = e.target;
+              el.style.height = "auto";
+              el.style.height = Math.min(el.scrollHeight, 160) + "px";
+            }}
             onKeyDown={handleKeyDown}
             placeholder="Type a message..."
             rows={1}

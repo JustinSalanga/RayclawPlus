@@ -1151,3 +1151,132 @@ body {
   display: flex;
   gap: 12px;
 }
+
+/* ---- P1: Code block copy button ---- */
+
+.code-block-wrapper {
+  position: relative;
+  margin: 10px 0;
+}
+
+.code-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  padding: 3px 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #aaa;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.code-block-wrapper:hover .code-copy-btn {
+  opacity: 1;
+}
+
+.code-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.code-block-wrapper .code-block {
+  margin: 0;
+}
+
+/* ---- P1: ToolStep spinner ---- */
+
+.tool-step-spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.tool-step-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--muted);
+}
+
+.tool-step-error .tool-step-icon {
+  color: var(--error);
+}
+
+/* ---- P1: Password field with Eye toggle ---- */
+
+.password-field {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-field input {
+  flex: 1;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 8px 36px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--charcoal);
+  outline: none;
+  transition: border-color 0.15s ease;
+  box-shadow: none;
+  width: 100%;
+}
+
+.password-field input:focus {
+  border-color: var(--accent);
+}
+
+.password-toggle {
+  position: absolute;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.password-toggle:hover {
+  color: var(--charcoal-light);
+}
+
+/* ---- P1: Form validation ---- */
+
+.settings-field-error input,
+.settings-field-error select {
+  border-color: var(--error) !important;
+}
+
+.field-error {
+  font-size: 12px;
+  color: var(--error);
+  margin: -8px 0 12px 166px;
+}
+
+/* ---- P1: Unsaved indicator ---- */
+
+.settings-dirty {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}

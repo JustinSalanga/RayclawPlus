@@ -1,9 +1,35 @@
+import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Copy, Check } from "lucide-react";
 import type { StoredMessage } from "../types";
 
 interface MessageBubbleProps {
   message: StoredMessage;
+}
+
+function CodeBlock({ className, children }: { className?: string; children: React.ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const text = String(children).replace(/\n$/, "");
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [text]);
+
+  return (
+    <div className="code-block-wrapper">
+      <button className="code-copy-btn" onClick={handleCopy} title="Copy code">
+        {copied ? <Check size={14} /> : <Copy size={14} />}
+        {copied ? "Copied" : "Copy"}
+      </button>
+      <pre className="code-block">
+        <code className={className}>{children}</code>
+      </pre>
+    </div>
+  );
 }
 
 export default function MessageBubble({ message }: MessageBubbleProps) {
@@ -21,13 +47,11 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
             remarkPlugins={[remarkGfm]}
             components={{
               code({ className, children, ...props }) {
-                const isInline = !className;
+                const isInline = !className && !String(children).includes("\n");
                 return isInline ? (
                   <code className="inline-code" {...props}>{children}</code>
                 ) : (
-                  <pre className="code-block">
-                    <code className={className} {...props}>{children}</code>
-                  </pre>
+                  <CodeBlock className={className}>{children}</CodeBlock>
                 );
               },
             }}

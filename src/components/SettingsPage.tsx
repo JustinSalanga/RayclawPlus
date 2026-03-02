@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { getConfig, saveConfig, getChannelStatus, toggleChannel } from "../lib/tauri-api";
 import type { ConfigDto, ChannelStatus } from "../types";
 
@@ -41,6 +42,57 @@ interface SettingsPageProps {
   onSaved: () => void;
 }
 
+// ---- Password field with Eye toggle ----
+function PasswordField({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="password-field">
+      <input
+        type={visible ? "text" : "password"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+      />
+      <button
+        type="button"
+        className="password-toggle"
+        onClick={() => setVisible(!visible)}
+        tabIndex={-1}
+      >
+        {visible ? <EyeOff size={15} /> : <Eye size={15} />}
+      </button>
+    </div>
+  );
+}
+
+// ---- Validation ----
+interface ValidationErrors {
+  [key: string]: string;
+}
+
+function validate(config: ConfigDto): ValidationErrors {
+  const errs: ValidationErrors = {};
+  if (config.max_tokens < 1) errs.max_tokens = "Must be at least 1";
+  if (config.max_tool_iterations < 1) errs.max_tool_iterations = "Must be at least 1";
+  if (config.max_history_messages < 1) errs.max_history_messages = "Must be at least 1";
+  if (config.max_session_messages < 1) errs.max_session_messages = "Must be at least 1";
+  if (config.memory_token_budget < 1) errs.memory_token_budget = "Must be at least 1";
+  if (config.llm_base_url && !/^https?:\/\/.+/.test(config.llm_base_url)) {
+    errs.llm_base_url = "Must be a valid URL (http:// or https://)";
+  }
+  if (!config.data_dir.trim()) errs.data_dir = "Required";
+  if (!config.working_dir.trim()) errs.working_dir = "Required";
+  return errs;
+}
+
 export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   const [config, setConfig] = useState<ConfigDto | null>(null);
   const [saving, setSaving] = useState(false);
@@ -49,32 +101,49 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   const [channelStatuses, setChannelStatuses] = useState<ChannelStatus[]>([]);
   const [activeTab, setActiveTab] = useState<SettingsTab>("provider");
   const [channelsOpen, setChannelsOpen] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
+  const initialConfigRef = useRef<string>("");
+
+  const isDirty = config ? JSON.stringify(config) !== initialConfigRef.current : false;
 
   const fetchStatuses = useCallback(() => {
     getChannelStatus().then(setChannelStatuses).catch(() => {});
   }, []);
 
   useEffect(() => {
-    getConfig().then(setConfig);
+    getConfig().then((c) => {
+      setConfig(c);
+      initialConfigRef.current = JSON.stringify(c);
+    });
     fetchStatuses();
     const interval = setInterval(fetchStatuses, 5000);
     return () => clearInterval(interval);
   }, [fetchStatuses]);
 
   const update = <K extends keyof ConfigDto>(key: K, value: ConfigDto[K]) => {
-    setConfig((prev) => (prev ? { ...prev, [key]: value } : prev));
+    setConfig((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, [key]: value };
+      setValidationErrors(validate(next));
+      return next;
+    });
     setSuccess(false);
     setError(null);
   };
 
   const handleSave = async () => {
     if (!config) return;
+    const errs = validate(config);
+    setValidationErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+
     setSaving(true);
     setError(null);
     setSuccess(false);
     try {
       await saveConfig(config);
       setSuccess(true);
+      initialConfigRef.current = JSON.stringify(config);
       onSaved();
       setTimeout(fetchStatuses, 1000);
     } catch (e) {
@@ -82,6 +151,13 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleBack = () => {
+    if (isDirty) {
+      if (!window.confirm("You have unsaved changes. Discard and leave?")) return;
+    }
+    onBack();
   };
 
   if (!config) {
@@ -93,6 +169,8 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   }
 
   const statusOf = (name: string) => channelStatuses.find((s) => s.name === name);
+  const fieldErr = (key: string) => validationErrors[key];
+  const hasErrors = Object.keys(validationErrors).length > 0;
 
   const handleToggle = async (name: string, enabled: boolean) => {
     try {
@@ -109,10 +187,6 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
   const selectTab = (tab: SettingsTab) => {
     setActiveTab(tab);
-    // Collapse channels section when navigating away
-    if (!tab.startsWith("ch:") && tab !== "provider") {
-      // keep channels open state as-is
-    }
   };
 
   const toggleChannelsOpen = () => {
@@ -120,7 +194,6 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
       setChannelsOpen(false);
     } else {
       setChannelsOpen(true);
-      // Select first channel
       setActiveTab("ch:telegram");
     }
   };
@@ -130,7 +203,6 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
     setChannelsOpen(true);
   };
 
-  // Status dot helper
   const StatusDot = ({ name }: { name: string }) => {
     const st = statusOf(name);
     if (st?.running) return <span className="nav-dot nav-dot-running" />;
@@ -141,14 +213,15 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   return (
     <main className="settings-page">
       <div className="settings-header">
-        <button className="btn-back" onClick={onBack}>
+        <button className="btn-back" onClick={handleBack}>
           &larr; Back
         </button>
         <h1>Settings</h1>
         <div className="settings-header-actions">
           {error && <span className="settings-error">{error}</span>}
           {success && <span className="settings-success">Saved</span>}
-          <button className="btn-save" onClick={handleSave} disabled={saving}>
+          {isDirty && !success && <span className="settings-dirty">Unsaved</span>}
+          <button className="btn-save" onClick={handleSave} disabled={saving || hasErrors}>
             {saving ? "Saving..." : "Save"}
           </button>
         </div>
@@ -164,7 +237,6 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
             AI Provider
           </button>
 
-          {/* Channels group */}
           <button
             className={`settings-nav-item settings-nav-group ${isChannelTab ? "settings-nav-active" : ""}`}
             onClick={toggleChannelsOpen}
@@ -231,10 +303,9 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
               <label className="settings-field">
                 <span>API Key</span>
-                <input
-                  type="password"
+                <PasswordField
                   value={config.api_key}
-                  onChange={(e) => update("api_key", e.target.value)}
+                  onChange={(v) => update("api_key", v)}
                   placeholder="sk-..."
                 />
               </label>
@@ -249,7 +320,7 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                 />
               </label>
 
-              <label className="settings-field">
+              <label className={`settings-field ${fieldErr("llm_base_url") ? "settings-field-error" : ""}`}>
                 <span>Base URL (optional)</span>
                 <input
                   type="text"
@@ -258,16 +329,18 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                   placeholder="https://api.example.com/v1"
                 />
               </label>
+              {fieldErr("llm_base_url") && <p className="field-error">{fieldErr("llm_base_url")}</p>}
 
-              <label className="settings-field">
+              <label className={`settings-field ${fieldErr("max_tokens") ? "settings-field-error" : ""}`}>
                 <span>Max Tokens</span>
                 <input
                   type="number"
                   value={config.max_tokens}
-                  onChange={(e) => update("max_tokens", Number(e.target.value) || 8192)}
+                  onChange={(e) => update("max_tokens", Number(e.target.value) || 0)}
                   min={1}
                 />
               </label>
+              {fieldErr("max_tokens") && <p className="field-error">{fieldErr("max_tokens")}</p>}
 
               <label className="settings-field settings-toggle">
                 <span>Show Thinking</span>
@@ -295,19 +368,17 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
                   <label className="settings-field">
                     <span>Access Key ID</span>
-                    <input
-                      type="password"
+                    <PasswordField
                       value={config.aws_access_key_id ?? ""}
-                      onChange={(e) => update("aws_access_key_id", e.target.value || null)}
+                      onChange={(v) => update("aws_access_key_id", v || null)}
                     />
                   </label>
 
                   <label className="settings-field">
                     <span>Secret Access Key</span>
-                    <input
-                      type="password"
+                    <PasswordField
                       value={config.aws_secret_access_key ?? ""}
-                      onChange={(e) => update("aws_secret_access_key", e.target.value || null)}
+                      onChange={(v) => update("aws_secret_access_key", v || null)}
                     />
                   </label>
 
@@ -348,10 +419,9 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
               <label className="settings-field">
                 <span>Bot Token</span>
-                <input
-                  type="password"
+                <PasswordField
                   value={config.telegram_bot_token}
-                  onChange={(e) => update("telegram_bot_token", e.target.value)}
+                  onChange={(v) => update("telegram_bot_token", v)}
                   placeholder="123456:ABC-DEF..."
                 />
               </label>
@@ -390,10 +460,9 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
               <label className="settings-field">
                 <span>Bot Token</span>
-                <input
-                  type="password"
+                <PasswordField
                   value={config.discord_bot_token ?? ""}
-                  onChange={(e) => update("discord_bot_token", e.target.value || null)}
+                  onChange={(v) => update("discord_bot_token", v || null)}
                   placeholder="Discord bot token"
                 />
               </label>
@@ -423,19 +492,17 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
               <label className="settings-field">
                 <span>Bot Token</span>
-                <input
-                  type="password"
+                <PasswordField
                   value={config.slack_bot_token ?? ""}
-                  onChange={(e) => update("slack_bot_token", e.target.value || null)}
+                  onChange={(v) => update("slack_bot_token", v || null)}
                   placeholder="xoxb-..."
                 />
               </label>
               <label className="settings-field">
                 <span>App Token</span>
-                <input
-                  type="password"
+                <PasswordField
                   value={config.slack_app_token ?? ""}
-                  onChange={(e) => update("slack_app_token", e.target.value || null)}
+                  onChange={(v) => update("slack_app_token", v || null)}
                   placeholder="xapp-..."
                 />
               </label>
@@ -474,10 +541,9 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
               </label>
               <label className="settings-field">
                 <span>App Secret</span>
-                <input
-                  type="password"
+                <PasswordField
                   value={config.feishu_app_secret ?? ""}
-                  onChange={(e) => update("feishu_app_secret", e.target.value || null)}
+                  onChange={(v) => update("feishu_app_secret", v || null)}
                 />
               </label>
             </div>
@@ -510,35 +576,38 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
             <div className="settings-panel-content">
               <h2>Session</h2>
 
-              <label className="settings-field">
+              <label className={`settings-field ${fieldErr("max_tool_iterations") ? "settings-field-error" : ""}`}>
                 <span>Max Tool Iterations</span>
                 <input
                   type="number"
                   value={config.max_tool_iterations}
-                  onChange={(e) => update("max_tool_iterations", Number(e.target.value) || 100)}
+                  onChange={(e) => update("max_tool_iterations", Number(e.target.value) || 0)}
                   min={1}
                 />
               </label>
+              {fieldErr("max_tool_iterations") && <p className="field-error">{fieldErr("max_tool_iterations")}</p>}
 
-              <label className="settings-field">
+              <label className={`settings-field ${fieldErr("max_history_messages") ? "settings-field-error" : ""}`}>
                 <span>Max History Messages</span>
                 <input
                   type="number"
                   value={config.max_history_messages}
-                  onChange={(e) => update("max_history_messages", Number(e.target.value) || 50)}
+                  onChange={(e) => update("max_history_messages", Number(e.target.value) || 0)}
                   min={1}
                 />
               </label>
+              {fieldErr("max_history_messages") && <p className="field-error">{fieldErr("max_history_messages")}</p>}
 
-              <label className="settings-field">
+              <label className={`settings-field ${fieldErr("max_session_messages") ? "settings-field-error" : ""}`}>
                 <span>Max Session Messages</span>
                 <input
                   type="number"
                   value={config.max_session_messages}
-                  onChange={(e) => update("max_session_messages", Number(e.target.value) || 40)}
+                  onChange={(e) => update("max_session_messages", Number(e.target.value) || 0)}
                   min={1}
                 />
               </label>
+              {fieldErr("max_session_messages") && <p className="field-error">{fieldErr("max_session_messages")}</p>}
             </div>
           )}
 
@@ -547,7 +616,7 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
             <div className="settings-panel-content">
               <h2>Paths</h2>
 
-              <label className="settings-field">
+              <label className={`settings-field ${fieldErr("data_dir") ? "settings-field-error" : ""}`}>
                 <span>Data Directory</span>
                 <input
                   type="text"
@@ -555,8 +624,9 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                   onChange={(e) => update("data_dir", e.target.value)}
                 />
               </label>
+              {fieldErr("data_dir") && <p className="field-error">{fieldErr("data_dir")}</p>}
 
-              <label className="settings-field">
+              <label className={`settings-field ${fieldErr("working_dir") ? "settings-field-error" : ""}`}>
                 <span>Working Directory</span>
                 <input
                   type="text"
@@ -564,6 +634,7 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                   onChange={(e) => update("working_dir", e.target.value)}
                 />
               </label>
+              {fieldErr("working_dir") && <p className="field-error">{fieldErr("working_dir")}</p>}
 
               <label className="settings-field">
                 <span>Timezone</span>
@@ -600,15 +671,16 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                 />
               </label>
 
-              <label className="settings-field">
+              <label className={`settings-field ${fieldErr("memory_token_budget") ? "settings-field-error" : ""}`}>
                 <span>Memory Token Budget</span>
                 <input
                   type="number"
                   value={config.memory_token_budget}
-                  onChange={(e) => update("memory_token_budget", Number(e.target.value) || 1500)}
+                  onChange={(e) => update("memory_token_budget", Number(e.target.value) || 0)}
                   min={1}
                 />
               </label>
+              {fieldErr("memory_token_budget") && <p className="field-error">{fieldErr("memory_token_budget")}</p>}
 
               <label className="settings-field">
                 <span>Soul Path (optional)</span>
