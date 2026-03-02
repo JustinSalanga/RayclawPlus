@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import MessageBubble from "./MessageBubble";
 import ToolStep from "./ToolStep";
-import { MessageSquarePlus, Settings, X, ChevronUp, ChevronDown } from "lucide-react";
+import { MessageSquarePlus, Settings, X, ChevronUp, ChevronDown, Paperclip } from "lucide-react";
 import { sendMessage, getHistory, onAgentStream, renameChat, type Attachment } from "../lib/tauri-api";
 import { inferChannel, channelLabel } from "../types";
 import type { StoredMessage, AgentStreamEvent } from "../types";
@@ -74,6 +74,7 @@ export default function ChatWindow({
   // File attachments
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Sync search open from prop
   useEffect(() => {
@@ -562,6 +563,25 @@ export default function ChatWindow({
             </div>
           )}
           <div className="chat-input-area">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: "none" }}
+              onChange={(e) => {
+                if (e.target.files) processFiles(Array.from(e.target.files));
+                e.target.value = "";
+              }}
+            />
+            <button
+              className="btn-attach"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isStreaming}
+              title="Attach image"
+            >
+              <Paperclip size={18} />
+            </button>
             <textarea
               ref={textareaRef}
               className="chat-input"
