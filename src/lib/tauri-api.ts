@@ -22,8 +22,18 @@ export async function toggleChannel(name: string, enabled: boolean): Promise<voi
   return invoke("toggle_channel", { name, enabled });
 }
 
-export async function sendMessage(chatId: number, content: string): Promise<void> {
-  return invoke("send_message", { chatId, content });
+export interface Attachment {
+  data: string;       // base64-encoded (no data URI prefix)
+  media_type: string; // e.g. "image/png"
+  name: string;
+}
+
+export async function sendMessage(chatId: number, content: string, attachments?: Attachment[]): Promise<void> {
+  return invoke("send_message", {
+    chatId,
+    content,
+    attachments: attachments && attachments.length > 0 ? attachments : null,
+  });
 }
 
 export async function getHistory(chatId: number, limit?: number): Promise<StoredMessage[]> {

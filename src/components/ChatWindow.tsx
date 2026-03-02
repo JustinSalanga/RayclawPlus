@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import MessageBubble from "./MessageBubble";
 import ToolStep from "./ToolStep";
 import { MessageSquarePlus, Settings, X, ChevronUp, ChevronDown } from "lucide-react";
-import { sendMessage, getHistory, onAgentStream, renameChat } from "../lib/tauri-api";
+import { sendMessage, getHistory, onAgentStream, renameChat, type Attachment } from "../lib/tauri-api";
 import { inferChannel, channelLabel } from "../types";
 import type { StoredMessage, AgentStreamEvent } from "../types";
 
@@ -303,14 +303,26 @@ export default function ChatWindow({
   };
 
   const handleSend = async () => {
-    if (!input.trim() || !chatId || isStreaming) return;
+    if ((!input.trim() && attachments.length === 0) || !chatId || isStreaming) return;
 
-    let userText = input.trim();
-    // Append attachment notes
-    if (attachments.length > 0) {
-      const names = attachments.map((a) => `[Attached: ${a.name}]`).join(" ");
-      userText = `${userText}\n${names}`;
-    }
+    const userText = input.trim();
+    const currentAttachments = [...attachments];
+
+    // Build attachment DTOs: extract raw base64 from dataUrl
+    const attachmentDtos: Attachment[] = currentAttachments
+      .filter((a) => a.type.startsWith("image/"))
+      .map((a) => {
+        // dataUrl format: "data:image/png;base64,iVBOR..."
+        const base64 = a.dataUrl.split(",")[1] || "";
+        return { data: base64, media_type: a.type, name: a.name };
+      });
+
+    // Display text for the user message bubble
+    const displayText = attachmentDtos.length > 0 && userText
+      ? `[image] ${userText}`
+      : attachmentDtos.length > 0
+        ? "[image]"
+        : userText;
 
     setInput("");
     setAttachments([]);
@@ -326,7 +338,7 @@ export default function ChatWindow({
       id: crypto.randomUUID(),
       chat_id: chatId,
       sender_name: "user",
-      content: userText,
+      content: displayText,
       is_from_bot: false,
       timestamp: new Date().toISOString(),
     };
@@ -334,7 +346,7 @@ export default function ChatWindow({
     setTimeout(scrollToBottom, 50);
 
     try {
-      await sendMessage(chatId, userText);
+      await sendMessage(chatId, userText, attachmentDtos.length > 0 ? attachmentDtos : undefined);
     } catch (err) {
       clearStreamTimeout();
       setIsStreaming(false);
@@ -569,7 +581,7 @@ export default function ChatWindow({
             <button
               className="btn-send"
               onClick={handleSend}
-              disabled={!input.trim() || isStreaming}
+              disabled={(!input.trim() && attachments.length === 0) || isStreaming}
             >
               Send
             </button>

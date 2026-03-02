@@ -552,17 +552,31 @@ pub async fn toggle_channel(
 // Commands: Chat
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct AttachmentDto {
+    pub data: String,       // base64-encoded file data
+    pub media_type: String, // e.g. "image/png"
+    #[allow(dead_code)]
+    pub name: String,       // original filename (used by frontend)
+}
+
 #[tauri::command]
 pub async fn send_message(
     app: tauri::AppHandle,
     chat_id: i64,
     content: String,
+    attachments: Option<Vec<AttachmentDto>>,
 ) -> Result<(), String> {
     let desktop = app.state::<DesktopState>();
     let state = require_state(&desktop).await?;
     let rt_handle = desktop.runtime.handle().clone();
 
-    info!("send_message: chat_id={chat_id}, len={}", content.len());
+    let attachments = attachments.unwrap_or_default();
+    info!(
+        "send_message: chat_id={chat_id}, len={}, attachments={}",
+        content.len(),
+        attachments.len()
+    );
 
     rt_handle.spawn(async move {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -601,8 +615,25 @@ pub async fn send_message(
             }
         });
 
+        // Extract first image attachment for the LLM vision API
+        let image_data: Option<(String, String)> = attachments
+            .iter()
+            .find(|a| a.media_type.starts_with("image/"))
+            .map(|a| (a.data.clone(), a.media_type.clone()));
+
+        // Build stored content: prefix with [image] if we have an image attachment
+        let stored_content = if image_data.is_some() {
+            if content.trim().is_empty() {
+                "[image]".to_string()
+            } else {
+                format!("[image] {content}")
+            }
+        } else {
+            content.clone()
+        };
+
         // Store user message (we're using AppState directly, not SDK)
-        store_user_message(&state, chat_id, &content);
+        store_user_message(&state, chat_id, &stored_content);
 
         // Run agent
         debug!("send_message: starting agent for chat_id={chat_id}");
@@ -615,7 +646,7 @@ pub async fn send_message(
             &state,
             context,
             Some(&content),
-            None,
+            image_data,
             Some(&tx),
         )
         .await;
