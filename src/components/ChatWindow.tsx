@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import MessageBubble from "./MessageBubble";
 import ToolStep from "./ToolStep";
+import { MessageSquarePlus, Settings } from "lucide-react";
 import { sendMessage, getHistory, onAgentStream } from "../lib/tauri-api";
 import { inferChannel } from "../types";
 import type { StoredMessage, AgentStreamEvent } from "../types";
@@ -16,11 +17,13 @@ interface ToolStepData {
 interface ChatWindowProps {
   chatId: number | null;
   chatType?: string;
+  onNewChat?: () => void;
+  onOpenSettings?: () => void;
 }
 
 const STREAM_TIMEOUT_MS = 90_000; // 90s no event → auto-unlock
 
-export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
+export default function ChatWindow({ chatId, chatType, onNewChat, onOpenSettings }: ChatWindowProps) {
   const channel = chatType ? inferChannel(chatType) : "desktop";
   const isReadOnly = channel !== "desktop";
   const [messages, setMessages] = useState<StoredMessage[]>([]);
@@ -206,9 +209,24 @@ export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
   if (chatId === null) {
     return (
       <main className="chat-window chat-window-empty">
-        <div className="chat-empty-message">
+        <div className="chat-empty-state">
+          <div className="empty-state-icon">RC</div>
           <h2>Welcome to RayClaw</h2>
-          <p>Select a chat or start a new one</p>
+          <p>Select a chat or start a new conversation</p>
+          <div className="empty-state-actions">
+            {onNewChat && (
+              <button className="empty-state-btn" onClick={onNewChat}>
+                <MessageSquarePlus size={16} />
+                New Chat
+              </button>
+            )}
+            {onOpenSettings && (
+              <button className="empty-state-btn empty-state-btn-secondary" onClick={onOpenSettings}>
+                <Settings size={16} />
+                Settings
+              </button>
+            )}
+          </div>
         </div>
       </main>
     );

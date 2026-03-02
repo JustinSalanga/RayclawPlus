@@ -103,6 +103,9 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   const [channelsOpen, setChannelsOpen] = useState(false);
   const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
   const initialConfigRef = useRef<string>("");
+  const [darkMode, setDarkMode] = useState(() => {
+    return document.documentElement.getAttribute("data-theme") === "dark";
+  });
 
   const isDirty = config ? JSON.stringify(config) !== initialConfigRef.current : false;
 
@@ -179,6 +182,12 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
     } catch (e) {
       setError(String(e));
     }
+  };
+
+  const handleDarkMode = (enabled: boolean) => {
+    setDarkMode(enabled);
+    document.documentElement.setAttribute("data-theme", enabled ? "dark" : "light");
+    localStorage.setItem("rayclaw-theme", enabled ? "dark" : "light");
   };
 
   const isBedrock = config.llm_provider === "bedrock";
@@ -652,6 +661,19 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
           {activeTab === "advanced" && (
             <div className="settings-panel-content">
               <h2>Advanced</h2>
+
+              <h3>Appearance</h3>
+              <label className="settings-field settings-toggle">
+                <span>Dark Mode</span>
+                <input
+                  type="checkbox"
+                  checked={darkMode}
+                  onChange={(e) => handleDarkMode(e.target.checked)}
+                />
+              </label>
+
+              <div className="settings-divider" />
+              <h3>Agent</h3>
 
               <label className="settings-field settings-toggle">
                 <span>Skip Tool Approval</span>

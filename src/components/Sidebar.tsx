@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect } from "react";
-import { MoreHorizontal, FileDown, Trash2 } from "lucide-react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { MoreHorizontal, FileDown, Trash2, Search, X } from "lucide-react";
 import { save, confirm } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { ChatSummary } from "../types";
-import { channelLabel } from "../types";
+import { channelLabel, inferChannel } from "../types";
 import { deleteChat, exportChatMarkdown } from "../lib/tauri-api";
 
 interface SidebarProps {
@@ -15,6 +15,23 @@ interface SidebarProps {
   onChatDeleted: () => void;
 }
 
+function relativeTime(isoString: string): string {
+  const now = Date.now();
+  const then = new Date(isoString).getTime();
+  const diff = now - then;
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days}d ago`;
+  const d = new Date(isoString);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 export default function Sidebar({
   chats,
   activeChatId,
@@ -24,7 +41,10 @@ export default function Sidebar({
   onChatDeleted,
 }: SidebarProps) {
   const [menuChatId, setMenuChatId] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   // Close menu on click outside
   useEffect(() => {
@@ -37,6 +57,38 @@ export default function Sidebar({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [menuChatId]);
+
+  // Focus search on open
+  useEffect(() => {
+    if (searchOpen) searchRef.current?.focus();
+  }, [searchOpen]);
+
+  // Keyboard shortcut: Cmd/Ctrl+K to open search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+      if (e.key === "Escape" && searchOpen) {
+        setSearchOpen(false);
+        setSearchQuery("");
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [searchOpen]);
+
+  const filteredChats = useMemo(() => {
+    if (!searchQuery.trim()) return chats;
+    const q = searchQuery.toLowerCase();
+    return chats.filter((c) => {
+      const title = (c.chat_title || "").toLowerCase();
+      const preview = (c.last_message_preview || "").toLowerCase();
+      const channel = inferChannel(c.chat_type);
+      return title.includes(q) || preview.includes(q) || channel.includes(q);
+    });
+  }, [chats, searchQuery]);
 
   const toggleMenu = (e: React.MouseEvent, chatId: number) => {
     e.stopPropagation();
@@ -68,7 +120,7 @@ export default function Sidebar({
         defaultPath: defaultName,
         filters: [{ name: "Markdown", extensions: ["md"] }],
       });
-      if (!filePath) return; // user cancelled
+      if (!filePath) return;
 
       const md = await exportChatMarkdown(chatId);
       await writeTextFile(filePath, md);
@@ -81,14 +133,43 @@ export default function Sidebar({
     <aside className="sidebar">
       <div className="sidebar-header">
         <h2>RayClaw</h2>
-        <button className="btn-new-chat" onClick={onNewChat} title="New Chat">
-          +
-        </button>
+        <div className="sidebar-header-actions">
+          <button
+            className="btn-icon"
+            onClick={() => { setSearchOpen(!searchOpen); if (searchOpen) setSearchQuery(""); }}
+            title="Search (Ctrl+K)"
+          >
+            <Search size={15} />
+          </button>
+          <button className="btn-new-chat" onClick={onNewChat} title="New Chat">
+            +
+          </button>
+        </div>
       </div>
+
+      {/* Search bar */}
+      {searchOpen && (
+        <div className="sidebar-search">
+          <input
+            ref={searchRef}
+            className="sidebar-search-input"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search chats..."
+          />
+          {searchQuery && (
+            <button className="sidebar-search-clear" onClick={() => setSearchQuery("")}>
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="sidebar-list">
-        {chats.map((chat) => {
+        {filteredChats.map((chat) => {
           const badge = channelLabel(chat.chat_type);
           const isMenuOpen = menuChatId === chat.chat_id;
+          const timeLabel = relativeTime(chat.last_message_time);
           return (
             <div
               key={chat.chat_id}
@@ -100,6 +181,7 @@ export default function Sidebar({
                   {badge && <span className="channel-badge">{badge}</span>}
                   {chat.chat_title || `Chat ${chat.chat_id}`}
                 </div>
+                <span className="sidebar-item-time">{timeLabel}</span>
                 <button
                   className="sidebar-item-more"
                   onClick={(e) => toggleMenu(e, chat.chat_id)}
@@ -114,7 +196,6 @@ export default function Sidebar({
                 </div>
               )}
 
-              {/* Dropdown menu */}
               {isMenuOpen && (
                 <div ref={menuRef} className="sidebar-dropdown" onClick={(e) => e.stopPropagation()}>
                   <button
@@ -136,6 +217,9 @@ export default function Sidebar({
             </div>
           );
         })}
+        {filteredChats.length === 0 && chats.length > 0 && (
+          <div className="sidebar-empty">No matching chats</div>
+        )}
         {chats.length === 0 && (
           <div className="sidebar-empty">No chats yet. Start a new one!</div>
         )}

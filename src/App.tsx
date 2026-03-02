@@ -94,6 +94,8 @@ function App() {
       <ChatWindow
         chatId={activeChatId}
         chatType={chats.find((c) => c.chat_id === activeChatId)?.chat_type}
+        onNewChat={handleNewChat}
+        onOpenSettings={() => setView("settings")}
       />
     </div>
   );

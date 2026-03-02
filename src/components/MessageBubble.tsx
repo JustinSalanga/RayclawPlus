@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, Bot } from "lucide-react";
 import type { StoredMessage } from "../types";
 
 interface MessageBubbleProps {
@@ -41,6 +41,17 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
 
   return (
     <div className={`message-bubble ${isBot ? "message-bot" : "message-user"}`}>
+      {isBot && (
+        <div className="message-sender">
+          <span className="message-sender-avatar"><Bot size={12} /></span>
+          RayClaw
+        </div>
+      )}
+      {!isBot && message.sender_name !== "user" && (
+        <div className="message-sender message-sender-user">
+          {message.sender_name}
+        </div>
+      )}
       <div className="message-content">
         {isBot ? (
           <ReactMarkdown
