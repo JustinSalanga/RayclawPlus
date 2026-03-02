@@ -940,7 +940,11 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
                 </div>
               </div>
 
-              {usageError && <p className="field-error" style={{ marginTop: 12 }}>{usageError}</p>}
+              {usageError && <p className="field-error" style={{ marginTop: 12 }}>Error: {usageError}</p>}
+
+              <p className="settings-hint" style={{ marginTop: 8, fontFamily: "var(--font-mono)", fontSize: 11 }}>
+                Debug: summary={usageSummary ? JSON.stringify(usageSummary) : "null"}, models={usageModels.length}, error={usageError ?? "none"}
+              </p>
 
               {usageSummary ? (
                 <div className="usage-summary-grid">
