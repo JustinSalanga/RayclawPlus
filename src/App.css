@@ -598,7 +598,7 @@ body {
 
 /* Sidebar Footer */
 .sidebar-footer {
-  padding: 12px 16px;
+  padding: 16px 16px 33px;
   border-top: 1px solid var(--border);
 }
 
