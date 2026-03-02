@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppStatus, ConfigDto, ChatSummary, StoredMessage, AgentStreamEvent, ChannelStatus, SkillDto, SkillDetailDto } from "../types";
+import type { AppStatus, ConfigDto, ChatSummary, StoredMessage, AgentStreamEvent, ChannelStatus, SoulDto, SkillDto, SkillDetailDto } from "../types";
 
 export async function getStatus(): Promise<AppStatus> {
   return invoke("get_status");
@@ -66,6 +66,15 @@ export async function exportChatMarkdown(chatId: number): Promise<string> {
 
 export function onAgentStream(callback: (event: AgentStreamEvent) => void): Promise<UnlistenFn> {
   return listen<AgentStreamEvent>("agent-stream", (e) => callback(e.payload));
+}
+
+// SOUL.md
+export async function readSoul(chatId?: number): Promise<SoulDto> {
+  return invoke("read_soul", { chatId: chatId ?? null });
+}
+
+export async function saveSoul(content: string, chatId?: number): Promise<void> {
+  return invoke("save_soul", { chatId: chatId ?? null, content });
 }
 
 // Skills

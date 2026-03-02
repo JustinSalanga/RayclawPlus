@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { getConfig, saveConfig, getChannelStatus, toggleChannel, listSkills, getSkill, saveSkill, deleteSkill } from "../lib/tauri-api";
+import { getConfig, saveConfig, getChannelStatus, toggleChannel, listSkills, getSkill, saveSkill, deleteSkill, readSoul, saveSoul } from "../lib/tauri-api";
 import type { ConfigDto, ChannelStatus, SkillDto, SkillDetailDto } from "../types";
 
 const PROVIDERS = [
@@ -115,6 +115,13 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
   const [skillForm, setSkillForm] = useState({ name: "", description: "", platforms: "", deps: "", content: "" });
   const [skillSaving, setSkillSaving] = useState(false);
   const [skillError, setSkillError] = useState<string | null>(null);
+
+  // Soul state
+  const [soulContent, setSoulContent] = useState("");
+  const [soulOriginal, setSoulOriginal] = useState("");
+  const [soulPath, setSoulPath] = useState("");
+  const [soulSaving, setSoulSaving] = useState(false);
+  const [soulSaved, setSoulSaved] = useState(false);
 
   const isDirty = config ? JSON.stringify(config) !== initialConfigRef.current : false;
 
@@ -269,6 +276,36 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
       setSkillError(String(e));
     }
   };
+
+  // Soul handlers
+  const fetchSoul = useCallback(() => {
+    readSoul().then((s) => {
+      setSoulContent(s.content);
+      setSoulOriginal(s.content);
+      setSoulPath(s.path);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "advanced") fetchSoul();
+  }, [activeTab, fetchSoul]);
+
+  const handleSaveSoul = async () => {
+    setSoulSaving(true);
+    setSoulSaved(false);
+    try {
+      await saveSoul(soulContent);
+      setSoulOriginal(soulContent);
+      setSoulSaved(true);
+      setTimeout(() => setSoulSaved(false), 2000);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSoulSaving(false);
+    }
+  };
+
+  const soulDirty = soulContent !== soulOriginal;
 
   const isBedrock = config.llm_provider === "bedrock";
   const isChannelTab = activeTab.startsWith("ch:");
@@ -924,15 +961,37 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
               </label>
               {fieldErr("memory_token_budget") && <p className="field-error">{fieldErr("memory_token_budget")}</p>}
 
-              <label className="settings-field">
-                <span>Soul Path (optional)</span>
-                <input
-                  type="text"
-                  value={config.soul_path ?? ""}
-                  onChange={(e) => update("soul_path", e.target.value || null)}
-                  placeholder="Path to SOUL.md"
+              <div className="settings-divider" />
+              <div className="soul-editor-section">
+                <div className="soul-editor-header">
+                  <h3>Personality (SOUL.md)</h3>
+                  <div className="soul-editor-actions">
+                    {soulSaved && <span className="settings-success">Saved</span>}
+                    {soulDirty && !soulSaved && <span className="settings-dirty">Unsaved</span>}
+                    <button
+                      className="btn-save"
+                      style={{ fontSize: 12, padding: "4px 12px" }}
+                      onClick={handleSaveSoul}
+                      disabled={soulSaving || !soulDirty}
+                    >
+                      {soulSaving ? "Saving..." : "Save"}
+                    </button>
+                  </div>
+                </div>
+                <p className="settings-hint">
+                  Define the bot's personality, values, and communication style. This is injected into the system prompt for all conversations.
+                </p>
+                <textarea
+                  className="soul-editor-textarea"
+                  value={soulContent}
+                  onChange={(e) => { setSoulContent(e.target.value); setSoulSaved(false); }}
+                  rows={14}
+                  placeholder={"# Personality\n\nYou are a helpful assistant...\n\n# Communication Style\n\n- Be concise and clear\n- Use a friendly tone"}
                 />
-              </label>
+                <p className="settings-hint" style={{ marginTop: 6 }}>
+                  {soulPath}
+                </p>
+              </div>
             </div>
           )}
         </div>

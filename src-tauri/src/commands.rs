@@ -790,6 +790,78 @@ pub async fn rename_chat(
 }
 
 // ---------------------------------------------------------------------------
+// Commands: SOUL.md
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SoulDto {
+    pub content: String,
+    pub path: String,
+    pub exists: bool,
+}
+
+/// Resolve the soul file path for a given scope.
+fn soul_path(state: &AppState, chat_id: Option<i64>) -> std::path::PathBuf {
+    if let Some(cid) = chat_id {
+        std::path::PathBuf::from(state.config.runtime_data_dir())
+            .join("groups")
+            .join(cid.to_string())
+            .join("SOUL.md")
+    } else {
+        state.config.data_root_dir().join("SOUL.md")
+    }
+}
+
+#[tauri::command]
+pub async fn read_soul(
+    app: tauri::AppHandle,
+    chat_id: Option<i64>,
+) -> Result<SoulDto, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let path = soul_path(&state, chat_id);
+    let exists = path.exists();
+    let content = if exists {
+        std::fs::read_to_string(&path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    Ok(SoulDto {
+        content,
+        path: path.to_string_lossy().to_string(),
+        exists,
+    })
+}
+
+#[tauri::command]
+pub async fn save_soul(
+    app: tauri::AppHandle,
+    chat_id: Option<i64>,
+    content: String,
+) -> Result<(), String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let path = soul_path(&state, chat_id);
+
+    if content.trim().is_empty() {
+        // Delete the file if content is empty
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| format!("Failed to delete SOUL.md: {e}"))?;
+            info!("save_soul: deleted {}", path.display());
+        }
+    } else {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory: {e}"))?;
+        }
+        std::fs::write(&path, &content)
+            .map_err(|e| format!("Failed to write SOUL.md: {e}"))?;
+        info!("save_soul: wrote {} bytes to {}", content.len(), path.display());
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Commands: Skills
 // ---------------------------------------------------------------------------
 

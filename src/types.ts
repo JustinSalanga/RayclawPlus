@@ -109,6 +109,12 @@ export function channelLabel(chatType: string): string | null {
   }
 }
 
+export interface SoulDto {
+  content: string;
+  path: string;
+  exists: boolean;
+}
+
 export interface SkillDto {
   name: string;
   description: string;

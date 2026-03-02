@@ -407,6 +407,8 @@ pub fn run() {
             commands::rename_chat,
             commands::delete_chat,
             commands::export_chat_markdown,
+            commands::read_soul,
+            commands::save_soul,
             commands::list_skills,
             commands::get_skill,
             commands::save_skill,

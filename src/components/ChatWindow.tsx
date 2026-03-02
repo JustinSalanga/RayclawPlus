@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import MessageBubble from "./MessageBubble";
 import ToolStep from "./ToolStep";
-import { MessageSquarePlus, Settings, X, ChevronUp, ChevronDown, Paperclip } from "lucide-react";
-import { sendMessage, getHistory, onAgentStream, renameChat, type Attachment } from "../lib/tauri-api";
+import { MessageSquarePlus, Settings, X, ChevronUp, ChevronDown, Paperclip, Sparkles } from "lucide-react";
+import { sendMessage, getHistory, onAgentStream, renameChat, readSoul, saveSoul, type Attachment } from "../lib/tauri-api";
 import { inferChannel, channelLabel } from "../types";
 import type { StoredMessage, AgentStreamEvent } from "../types";
 
@@ -76,6 +76,12 @@ export default function ChatWindow({
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Per-chat soul editor
+  const [soulOpen, setSoulOpen] = useState(false);
+  const [soulContent, setSoulContent] = useState("");
+  const [soulOriginal, setSoulOriginal] = useState("");
+  const [soulSaving, setSoulSaving] = useState(false);
+
   // Sync search open from prop
   useEffect(() => {
     if (searchOpenProp) {
@@ -148,6 +154,7 @@ export default function ChatWindow({
     setSendError(null);
     setSearchOpen(false);
     setAttachments([]);
+    setSoulOpen(false);
     if (streamingChatIdRef.current !== chatId) {
       setIsStreaming(false);
       setStreamingText("");
@@ -413,6 +420,31 @@ export default function ChatWindow({
     }
   };
 
+  // Soul handlers
+  const handleOpenSoul = async () => {
+    if (!chatId) return;
+    try {
+      const s = await readSoul(chatId);
+      setSoulContent(s.content);
+      setSoulOriginal(s.content);
+      setSoulOpen(true);
+    } catch { /* ignore */ }
+  };
+
+  const handleSaveSoul = async () => {
+    if (!chatId) return;
+    setSoulSaving(true);
+    try {
+      await saveSoul(soulContent, chatId);
+      setSoulOriginal(soulContent);
+    } catch { /* ignore */ }
+    setSoulSaving(false);
+  };
+
+  const handleCloseSoul = () => {
+    setSoulOpen(false);
+  };
+
   if (chatId === null) {
     return (
       <main className="chat-window chat-window-empty">
@@ -466,7 +498,46 @@ export default function ChatWindow({
         {isReadOnly && (
           <span className="chat-header-readonly">View only</span>
         )}
+        {!isReadOnly && (
+          <button className="chat-header-soul-btn" onClick={handleOpenSoul} title="Chat personality">
+            <Sparkles size={14} />
+          </button>
+        )}
       </div>
+
+      {/* Per-chat soul editor */}
+      {soulOpen && (
+        <div className="chat-soul-panel">
+          <div className="chat-soul-panel-header">
+            <span className="chat-soul-panel-title">Chat Personality</span>
+            <div className="chat-soul-panel-actions">
+              {soulContent !== soulOriginal && (
+                <button
+                  className="btn-save"
+                  style={{ fontSize: 11, padding: "2px 10px" }}
+                  onClick={handleSaveSoul}
+                  disabled={soulSaving}
+                >
+                  {soulSaving ? "Saving..." : "Save"}
+                </button>
+              )}
+              <button className="chat-search-close" onClick={handleCloseSoul}>
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+          <textarea
+            className="chat-soul-textarea"
+            value={soulContent}
+            onChange={(e) => setSoulContent(e.target.value)}
+            rows={6}
+            placeholder="Override personality for this chat only. Leave empty to use global SOUL.md."
+          />
+          <p className="chat-soul-hint">
+            {soulContent.trim() ? "This chat uses a custom personality override." : "No override — using global SOUL.md."}
+          </p>
+        </div>
+      )}
 
       {/* Message search bar */}
       {searchOpen && (
