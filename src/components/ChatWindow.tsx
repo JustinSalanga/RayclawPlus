@@ -45,13 +45,14 @@ export default function ChatWindow({ chatId, chatType }: ChatWindowProps) {
 
   // Reset streaming state when switching chats
   useEffect(() => {
-    setStreamingText("");
-    setToolSteps([]);
     setSendError(null);
-    // Only reset isStreaming if the new chat is not the one being streamed
     if (streamingChatIdRef.current !== chatId) {
+      // Switching to a non-streaming chat — clear everything
       setIsStreaming(false);
+      setStreamingText("");
+      setToolSteps([]);
     }
+    // If switching back to the streaming chat, keep streamingText/toolSteps intact
   }, [chatId]);
 
   // Load history when chat changes
