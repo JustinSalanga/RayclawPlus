@@ -26,6 +26,23 @@ fn expand_tilde(path: &str) -> String {
     }
 }
 
+/// Ensure RAYCLAW_CONFIG env var is set to ~/.rayclaw/rayclaw.config.yaml
+/// if it doesn't already exist AND the file exists. This ensures the Desktop app
+/// finds the config regardless of the current working directory (which varies
+/// between dev and release). If the file doesn't exist yet, we leave the env
+/// unset so the app shows the setup screen.
+fn ensure_config_env() {
+    if std::env::var("RAYCLAW_CONFIG").is_ok() {
+        return; // Already set, respect user override
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let config_path = format!("{home}/.rayclaw/rayclaw.config.yaml");
+    if std::path::Path::new(&config_path).exists() {
+        // SAFETY: Called at app startup before any threads are spawned
+        unsafe { std::env::set_var("RAYCLAW_CONFIG", &config_path) };
+    }
+}
+
 fn init_logging() {
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -344,6 +361,7 @@ pub(crate) fn start_channels(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    ensure_config_env();
     init_logging();
     info!("RayClaw Desktop v{} starting", env!("CARGO_PKG_VERSION"));
 
