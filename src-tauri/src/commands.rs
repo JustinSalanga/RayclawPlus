@@ -161,6 +161,21 @@ fn default_config_path() -> String {
     format!("{dir}/rayclaw.config.yaml")
 }
 
+/// Load config for Desktop without channel validation.
+/// This allows the Settings UI to read config even when no channels are enabled.
+fn load_config_for_desktop() -> rayclaw::config::Config {
+    let path = default_config_path();
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            serde_yaml::from_str(&content).unwrap_or_else(|e| {
+                debug!("Failed to parse config: {e}");
+                default_config()
+            })
+        }
+        Err(_) => default_config(),
+    }
+}
+
 fn channel_str(
     channels: &std::collections::HashMap<String, serde_yaml::Value>,
     channel: &str,
@@ -251,7 +266,7 @@ pub async fn get_status(app: tauri::AppHandle) -> Result<AppStatus, String> {
 
 #[tauri::command]
 pub async fn get_config(_app: tauri::AppHandle) -> Result<ConfigDto, String> {
-    let config = rayclaw::config::Config::load().unwrap_or_else(|_| default_config());
+    let config = load_config_for_desktop();
 
     Ok(ConfigDto {
         llm_provider: config.llm_provider.clone(),
@@ -302,7 +317,7 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
         "save_config: provider={}, model={}",
         config.llm_provider, config.model
     );
-    let mut full_config = rayclaw::config::Config::load().unwrap_or_else(|_| default_config());
+    let mut full_config = load_config_for_desktop();
 
     // Apply DTO fields (skip masked secrets)
     full_config.llm_provider = config.llm_provider;
@@ -453,7 +468,7 @@ pub struct ChannelStatusDto {
 #[tauri::command]
 pub async fn get_channel_status(app: tauri::AppHandle) -> Result<Vec<ChannelStatusDto>, String> {
     let desktop = app.state::<DesktopState>();
-    let config = rayclaw::config::Config::load().unwrap_or_else(|_| default_config());
+    let config = load_config_for_desktop();
     let handles = desktop.channel_handles.lock().unwrap();
     let enabled_map = desktop.channel_enabled.lock().unwrap();
 
