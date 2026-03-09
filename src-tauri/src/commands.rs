@@ -105,7 +105,21 @@ pub struct ConfigDto {
 // ---------------------------------------------------------------------------
 
 fn home_dir() -> String {
-    std::env::var("HOME").unwrap_or_else(|_| ".".into())
+    std::env::var("HOME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("USERPROFILE")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .or_else(|| {
+            let home_drive = std::env::var("HOMEDRIVE").ok()?;
+            let home_path = std::env::var("HOMEPATH").ok()?;
+            let combined = format!("{home_drive}{home_path}");
+            (!combined.trim().is_empty()).then_some(combined)
+        })
+        .unwrap_or_else(|| ".".into())
 }
 
 fn expand_tilde(path: &str) -> String {
@@ -119,19 +133,30 @@ fn expand_tilde(path: &str) -> String {
 }
 
 fn default_config() -> rayclaw::config::Config {
-    let home = home_dir();
-    let yaml = format!(
-        r#"
-llm_provider: anthropic
-api_key: ""
-model: ""
-data_dir: "{home}/.rayclaw/data"
-working_dir: "{home}/.rayclaw/tmp"
-timezone: UTC
-web_enabled: false
-"#
-    );
-    serde_yaml::from_str(&yaml).expect("default config YAML is always valid")
+    #[derive(Serialize)]
+    struct DefaultConfigSeed {
+        llm_provider: String,
+        api_key: String,
+        model: String,
+        data_dir: String,
+        working_dir: String,
+        timezone: String,
+        web_enabled: bool,
+    }
+
+    let base_dir = std::path::PathBuf::from(home_dir()).join(".rayclaw");
+    let seed = DefaultConfigSeed {
+        llm_provider: "anthropic".into(),
+        api_key: String::new(),
+        model: String::new(),
+        data_dir: base_dir.join("data").to_string_lossy().to_string(),
+        working_dir: base_dir.join("tmp").to_string_lossy().to_string(),
+        timezone: "UTC".into(),
+        web_enabled: false,
+    };
+
+    serde_yaml::from_value(serde_yaml::to_value(seed).expect("default config seed is serializable"))
+        .expect("default config seed is always valid")
 }
 
 fn mask_secret(s: &str) -> String {
