@@ -2,6 +2,7 @@ pub mod acp;
 pub mod activate_skill;
 pub mod bash;
 pub mod browser;
+pub mod capture_screenshot;
 pub mod command_runner;
 pub mod edit_file;
 pub mod export_chat;
@@ -102,6 +103,7 @@ pub fn tool_risk(name: &str) -> ToolRisk {
         | "edit_file"
         | "write_memory"
         | "send_message"
+        | "capture_screenshot"
         | "sync_skills"
         | "schedule_task"
         | "pause_scheduled_task"
@@ -300,6 +302,9 @@ impl ToolRegistry {
                 config.working_dir_isolation,
             )),
             Box::new(browser::BrowserTool::new(&config.data_dir)),
+            Box::new(capture_screenshot::CaptureScreenshotTool::new(
+                &config.data_dir,
+            )),
             Box::new(read_file::ReadFileTool::new_with_isolation(
                 &config.working_dir,
                 config.working_dir_isolation,
@@ -399,6 +404,9 @@ impl ToolRegistry {
                 config.working_dir_isolation,
             )),
             Box::new(browser::BrowserTool::new(&config.data_dir)),
+            Box::new(capture_screenshot::CaptureScreenshotTool::new(
+                &config.data_dir,
+            )),
             Box::new(read_file::ReadFileTool::new_with_isolation(
                 &config.working_dir,
                 config.working_dir_isolation,
@@ -466,6 +474,9 @@ impl ToolRegistry {
                 config.working_dir_isolation,
             )),
             Box::new(browser::BrowserTool::new(&config.data_dir)),
+            Box::new(capture_screenshot::CaptureScreenshotTool::new(
+                &config.data_dir,
+            )),
             Box::new(read_file::ReadFileTool::new_with_isolation(
                 &config.working_dir,
                 config.working_dir_isolation,
@@ -724,6 +735,7 @@ mod tests {
     #[test]
     fn test_tool_risk_levels() {
         assert_eq!(tool_risk("bash"), ToolRisk::High);
+        assert_eq!(tool_risk("capture_screenshot"), ToolRisk::Medium);
         assert_eq!(tool_risk("write_file"), ToolRisk::Medium);
         assert_eq!(tool_risk("pause_scheduled_task"), ToolRisk::Medium);
         assert_eq!(tool_risk("sync_skills"), ToolRisk::Medium);

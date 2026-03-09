@@ -1,0 +1,9 @@
+{
+  "name": "rayclaw-agent-browser-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "type": "commonjs",
+  "dependencies": {
+    "agent-browser": "0.17.1"
+  }
+}

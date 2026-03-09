@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+browser-runtime/node_modules/
+browser-runtime/package-lock.json
+src-tauri/resources/agent-browser/
 
 # SQLite data files (may be created during dev)
 *.db

@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.rayclaw.desktop",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm prepare:agent-browser && pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm prepare:agent-browser && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -21,12 +21,19 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "resources/agent-browser/**/*"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

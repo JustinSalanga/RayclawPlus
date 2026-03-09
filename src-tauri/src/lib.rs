@@ -2,6 +2,7 @@ mod commands;
 mod paths;
 mod state;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use rayclaw::channel_adapter::ChannelRegistry;
@@ -77,6 +78,78 @@ fn init_logging() {
         "Logging initialized — file: {}/{}.*",
         log_dir.display(),
         paths::LOG_FILE_NAME
+    );
+}
+
+fn agent_browser_resource_root(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let dev_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("resources")
+        .join("agent-browser");
+    if dev_root.exists() {
+        return Some(dev_root);
+    }
+
+    let resource_dir = app.path().resource_dir().ok()?;
+
+    let bundled_root = resource_dir.join("resources").join("agent-browser");
+    if bundled_root.exists() {
+        return Some(bundled_root);
+    }
+
+    let flat_root = resource_dir.join("agent-browser");
+    if flat_root.exists() {
+        return Some(flat_root);
+    }
+
+    None
+}
+
+fn configure_agent_browser_env(app: &tauri::AppHandle) {
+    if std::env::var("RAYCLAW_AGENT_BROWSER_NODE").is_ok()
+        && std::env::var("RAYCLAW_AGENT_BROWSER_ENTRY").is_ok()
+    {
+        return;
+    }
+
+    let Some(root) = agent_browser_resource_root(app) else {
+        warn!("Bundled agent-browser runtime not found");
+        return;
+    };
+
+    let node_binary = if cfg!(target_os = "windows") {
+        root.join("node").join("node.exe")
+    } else {
+        root.join("node").join("node")
+    };
+    let entry_script = root
+        .join("app")
+        .join("node_modules")
+        .join("agent-browser")
+        .join("bin")
+        .join("agent-browser.js");
+    let browsers_path = root.join("ms-playwright");
+
+    if !node_binary.exists() || !entry_script.exists() {
+        warn!(
+            "Bundled agent-browser runtime is incomplete: node={}, entry={}",
+            node_binary.display(),
+            entry_script.display()
+        );
+        return;
+    }
+
+    // SAFETY: Called during app setup before worker threads are spawned.
+    unsafe {
+        std::env::set_var("RAYCLAW_AGENT_BROWSER_NODE", &node_binary);
+        std::env::set_var("RAYCLAW_AGENT_BROWSER_ENTRY", &entry_script);
+        if browsers_path.exists() {
+            std::env::set_var("PLAYWRIGHT_BROWSERS_PATH", &browsers_path);
+        }
+    }
+
+    info!(
+        "Configured bundled agent-browser runtime from {}",
+        root.display()
     );
 }
 
@@ -373,6 +446,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
+            configure_agent_browser_env(&app.handle().clone());
             let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
 
             let channel_enabled = state::load_channel_enabled();

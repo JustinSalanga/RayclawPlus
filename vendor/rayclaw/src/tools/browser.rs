@@ -6,12 +6,51 @@ use tracing::info;
 
 use crate::llm_types::ToolDefinition;
 use crate::text::floor_char_boundary;
-use crate::tools::command_runner::agent_browser_program;
-
 use super::{auth_context_from_input, schema_object, Tool, ToolResult};
 
 pub struct BrowserTool {
     data_dir: PathBuf,
+}
+
+struct BrowserCommandSpec {
+    program: String,
+    args: Vec<String>,
+    env: Vec<(String, String)>,
+    source: &'static str,
+}
+
+fn browser_command_verb(command: &str) -> Option<&str> {
+    command.split_whitespace().next()
+}
+
+fn default_timeout_secs_for_command(command: &str, source: &str) -> u64 {
+    let base = match browser_command_verb(command) {
+        Some("open" | "reload" | "wait" | "screenshot" | "pdf" | "tab") => 120,
+        Some(
+            "click"
+            | "dblclick"
+            | "fill"
+            | "type"
+            | "press"
+            | "hover"
+            | "select"
+            | "check"
+            | "uncheck"
+            | "upload"
+            | "drag"
+            | "scroll"
+            | "scrollintoview"
+            | "find"
+            | "eval",
+        ) => 60,
+        Some(_) | None => 60,
+    };
+
+    if matches!(source, "bundled-app" | "npx") {
+        base.max(120)
+    } else {
+        base
+    }
 }
 
 fn split_browser_command(command: &str) -> Result<Vec<String>, String> {
@@ -90,6 +129,165 @@ impl BrowserTool {
         };
         format!("rayclaw-chat-{normalized}")
     }
+
+    fn command_exists(command: &str) -> bool {
+        if command.trim().is_empty() {
+            return false;
+        }
+
+        let path_var = std::env::var_os("PATH").unwrap_or_default();
+
+        #[cfg(target_os = "windows")]
+        let candidates: Vec<String> = {
+            let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+            let ext_list: Vec<String> = exts
+                .split(';')
+                .map(|s| s.trim().to_ascii_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            let mut out = vec![command.to_string()];
+            let lower = command.to_ascii_lowercase();
+            if !ext_list.iter().any(|ext| lower.ends_with(ext)) {
+                for ext in ext_list {
+                    out.push(format!("{command}{ext}"));
+                }
+            }
+            out
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let candidates: Vec<String> = vec![command.to_string()];
+
+        for base in std::env::split_paths(&path_var) {
+            for candidate in &candidates {
+                if base.join(candidate).is_file() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn browser_command_candidates() -> Vec<BrowserCommandSpec> {
+        let mut out = Vec::new();
+
+        if let (Ok(node), Ok(entry)) = (
+            std::env::var("RAYCLAW_AGENT_BROWSER_NODE"),
+            std::env::var("RAYCLAW_AGENT_BROWSER_ENTRY"),
+        ) {
+            let node_path = PathBuf::from(&node);
+            let entry_path = PathBuf::from(&entry);
+            if node_path.is_file() && entry_path.is_file() {
+                let mut env = Vec::new();
+                if let Ok(browsers_path) = std::env::var("PLAYWRIGHT_BROWSERS_PATH") {
+                    if !browsers_path.trim().is_empty() {
+                        env.push(("PLAYWRIGHT_BROWSERS_PATH".to_string(), browsers_path));
+                    }
+                }
+
+                out.push(BrowserCommandSpec {
+                    program: node,
+                    args: vec![entry],
+                    env,
+                    source: "bundled-app",
+                });
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if Self::command_exists("agent-browser.cmd") {
+                out.push(BrowserCommandSpec {
+                    program: "agent-browser.cmd".to_string(),
+                    args: Vec::new(),
+                    env: Vec::new(),
+                    source: "PATH",
+                });
+            }
+
+            let mut add_path_candidate = |path: PathBuf, source: &'static str| {
+                if path.is_file() {
+                    out.push(BrowserCommandSpec {
+                        program: path.to_string_lossy().to_string(),
+                        args: Vec::new(),
+                        env: Vec::new(),
+                        source,
+                    });
+                }
+            };
+
+            if let Ok(app_data) = std::env::var("APPDATA") {
+                let app_data = PathBuf::from(app_data);
+                add_path_candidate(
+                    app_data.join("npm").join("agent-browser.cmd"),
+                    "APPDATA npm bin",
+                );
+            }
+            if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+                let local_app_data = PathBuf::from(local_app_data);
+                add_path_candidate(
+                    local_app_data.join("npm").join("agent-browser.cmd"),
+                    "LOCALAPPDATA npm bin",
+                );
+            }
+            if let Ok(user_profile) = std::env::var("USERPROFILE") {
+                let user_profile = PathBuf::from(user_profile);
+                add_path_candidate(
+                    user_profile
+                        .join("AppData")
+                        .join("Roaming")
+                        .join("npm")
+                        .join("agent-browser.cmd"),
+                    "USERPROFILE npm bin",
+                );
+            }
+
+            if Self::command_exists("npx.cmd") {
+                out.push(BrowserCommandSpec {
+                    program: "npx.cmd".to_string(),
+                    args: vec!["--yes".to_string(), "agent-browser".to_string()],
+                    env: Vec::new(),
+                    source: "npx",
+                });
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            if Self::command_exists("agent-browser") {
+                out.push(BrowserCommandSpec {
+                    program: "agent-browser".to_string(),
+                    args: Vec::new(),
+                    env: Vec::new(),
+                    source: "PATH",
+                });
+            }
+
+            if let Ok(home) = std::env::var("HOME") {
+                let local_bin = PathBuf::from(home).join(".local").join("bin").join("agent-browser");
+                if local_bin.is_file() {
+                    out.push(BrowserCommandSpec {
+                        program: local_bin.to_string_lossy().to_string(),
+                        args: Vec::new(),
+                        env: Vec::new(),
+                        source: "~/.local/bin",
+                    });
+                }
+            }
+
+            if Self::command_exists("npx") {
+                out.push(BrowserCommandSpec {
+                    program: "npx".to_string(),
+                    args: vec!["--yes".to_string(), "agent-browser".to_string()],
+                    env: Vec::new(),
+                    source: "npx",
+                });
+            }
+        }
+
+        out
+    }
 }
 
 #[async_trait]
@@ -135,7 +333,7 @@ impl Tool for BrowserTool {
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Timeout in seconds (default: 30)"
+                        "description": "Timeout in seconds. Optional; if omitted, the tool uses a longer command-aware default."
                     }
                 }),
                 &["command"],
@@ -149,10 +347,9 @@ impl Tool for BrowserTool {
             None => return ToolResult::error("Missing 'command' parameter".into()),
         };
 
-        let timeout_secs = input
+        let requested_timeout_secs = input
             .get("timeout_secs")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(30);
+            .and_then(|v| v.as_u64());
 
         let auth = auth_context_from_input(&input);
 
@@ -179,17 +376,41 @@ impl Tool for BrowserTool {
         };
         args.extend(command_args);
 
-        let program = agent_browser_program();
-        info!("Executing browser command via '{}'", program);
+        let candidates = Self::browser_command_candidates();
+        if candidates.is_empty() {
+            return ToolResult::error(
+                "Browser tool runtime is unavailable. Rebuild the desktop app bundle, or install `agent-browser` and run `agent-browser install` for external use."
+                    .into(),
+            )
+            .with_error_type("missing_dependency");
+        }
 
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            tokio::process::Command::new(&program).args(&args).output(),
-        )
-        .await;
+        let mut last_not_found_error: Option<String> = None;
 
-        match result {
-            Ok(Ok(output)) => {
+        for candidate in candidates {
+            info!(
+                "Executing browser command via '{}' ({})",
+                candidate.program, candidate.source
+            );
+
+            let effective_timeout_secs = requested_timeout_secs
+                .unwrap_or_else(|| default_timeout_secs_for_command(command, candidate.source));
+
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(effective_timeout_secs),
+                {
+                    let mut cmd = tokio::process::Command::new(&candidate.program);
+                    cmd.kill_on_drop(true)
+                        .args(&candidate.args)
+                        .envs(candidate.env.iter().cloned())
+                        .args(&args);
+                    cmd.output()
+                },
+            )
+            .await;
+
+            match result {
+                Ok(Ok(output)) => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let exit_code = output.status.code().unwrap_or(-1);
@@ -216,21 +437,42 @@ impl Tool for BrowserTool {
                     result_text.push_str("\n... (output truncated)");
                 }
 
-                if exit_code == 0 {
-                    ToolResult::success(result_text).with_status_code(exit_code)
-                } else {
-                    ToolResult::error(format!("Exit code {exit_code}\n{result_text}"))
-                        .with_status_code(exit_code)
-                        .with_error_type("process_exit")
+                    if exit_code == 0 {
+                        return ToolResult::success(result_text).with_status_code(exit_code);
+                    } else {
+                        return ToolResult::error(format!("Exit code {exit_code}\n{result_text}"))
+                            .with_status_code(exit_code)
+                            .with_error_type("process_exit");
+                    }
+                }
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    last_not_found_error = Some(format!(
+                        "{} ({}) not found: {}",
+                        candidate.program, candidate.source, e
+                    ));
+                    continue;
+                }
+                Ok(Err(e)) => {
+                    return ToolResult::error(format!(
+                        "Failed to execute browser command via {} ({}): {e}",
+                        candidate.program, candidate.source
+                    ))
+                    .with_error_type("spawn_error");
+                }
+                Err(_) => {
+                    return ToolResult::error(format!(
+                        "Browser command timed out after {effective_timeout_secs} seconds"
+                    ))
+                    .with_error_type("timeout");
                 }
             }
-            Ok(Err(e)) => ToolResult::error(format!("Failed to execute agent-browser: {e}"))
-                .with_error_type("spawn_error"),
-            Err(_) => ToolResult::error(format!(
-                "Browser command timed out after {timeout_secs} seconds"
-            ))
-            .with_error_type("timeout"),
         }
+
+        ToolResult::error(format!(
+            "Failed to execute browser runtime. {}. Rebuild the app bundle, or install `agent-browser` and run `agent-browser install` for external use.",
+            last_not_found_error.unwrap_or_else(|| "No runnable agent-browser command was found".to_string())
+        ))
+        .with_error_type("missing_dependency")
     }
 }
 
@@ -285,6 +527,13 @@ mod tests {
             BrowserTool::session_name_for_chat(-100987),
             "rayclaw-chat-neg100987"
         );
+    }
+
+    #[test]
+    fn test_default_timeout_secs_for_command() {
+        assert_eq!(default_timeout_secs_for_command("open https://example.com", "PATH"), 120);
+        assert_eq!(default_timeout_secs_for_command("click @e1", "PATH"), 60);
+        assert_eq!(default_timeout_secs_for_command("snapshot -i", "bundled-app"), 120);
     }
 
     #[tokio::test]
