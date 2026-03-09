@@ -30,6 +30,15 @@ interface QueuedMessage {
   optimisticMessage: StoredMessage;
 }
 
+interface ChatRuntimeState {
+  isStreaming: boolean;
+  streamPhase: StreamPhase | null;
+  streamingText: string;
+  toolSteps: ToolStepData[];
+  sendError: string | null;
+  queuedMessages: QueuedMessage[];
+}
+
 interface ChatWindowProps {
   chatId: number | null;
   chatTitle: string | null;
@@ -43,6 +52,17 @@ interface ChatWindowProps {
 
 const STREAM_TIMEOUT_MS = 90_000; // 90s no event → auto-unlock
 const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024; // 5MB
+
+function createDefaultChatRuntimeState(): ChatRuntimeState {
+  return {
+    isStreaming: false,
+    streamPhase: null,
+    streamingText: "",
+    toolSteps: [],
+    sendError: null,
+    queuedMessages: [],
+  };
+}
 
 export default function ChatWindow({
   chatId,
@@ -59,20 +79,12 @@ export default function ChatWindow({
   const badge = chatType ? channelLabel(chatType) : null;
   const [messages, setMessages] = useState<StoredMessage[]>([]);
   const [input, setInput] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [streamPhase, setStreamPhase] = useState<StreamPhase | null>(null);
-  const [streamingText, setStreamingText] = useState("");
-  const [toolSteps, setToolSteps] = useState<ToolStepData[]>([]);
-  const [sendError, setSendError] = useState<string | null>(null);
-  const [queuedCount, setQueuedCount] = useState(0);
-  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  const [chatRuntimeStates, setChatRuntimeStates] = useState<Record<number, ChatRuntimeState>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modalTextareaRef = useRef<HTMLTextAreaElement>(null);
   const chatIdRef = useRef<number | null>(chatId);
-  const streamTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const streamingChatIdRef = useRef<number | null>(null);
-  const queuedMessagesRef = useRef<QueuedMessage[]>([]);
+  const streamTimeoutsRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const [isInputModalOpen, setIsInputModalOpen] = useState(false);
 
   // Title editing
@@ -140,8 +152,37 @@ export default function ChatWindow({
       .filter((i) => i !== -1);
   }, [messages, searchQuery]);
 
+  const activeRuntimeState = chatId !== null
+    ? (chatRuntimeStates[chatId] ?? createDefaultChatRuntimeState())
+    : createDefaultChatRuntimeState();
+  const {
+    isStreaming,
+    streamPhase,
+    streamingText,
+    toolSteps,
+    sendError,
+    queuedMessages,
+  } = activeRuntimeState;
+  const queuedCount = queuedMessages.length;
   const runningToolCount = toolSteps.filter((step) => step.isRunning).length;
   const completedToolCount = toolSteps.length - runningToolCount;
+
+  const updateChatRuntimeState = useCallback((
+    targetChatId: number,
+    updater: (state: ChatRuntimeState) => ChatRuntimeState,
+  ) => {
+    setChatRuntimeStates((prev) => {
+      const current = prev[targetChatId] ?? createDefaultChatRuntimeState();
+      const next = updater(current);
+      if (next === current) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [targetChatId]: next,
+      };
+    });
+  }, []);
 
   const streamStatus = useMemo(() => {
     if (!isStreaming || !streamPhase) return null;
@@ -218,138 +259,169 @@ export default function ChatWindow({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
-  // Reset streaming state when switching chats
+  // Reset view-local UI when switching chats
   useEffect(() => {
-    setSendError(null);
     setSearchOpen(false);
     setAttachments([]);
     setSoulOpen(false);
-    queuedMessagesRef.current = [];
-    setQueuedMessages([]);
-    setQueuedCount(0);
-    if (streamingChatIdRef.current !== chatId) {
-      setIsStreaming(false);
-      setStreamPhase(null);
-      setStreamingText("");
-      setToolSteps([]);
-    }
   }, [chatId]);
 
   // Load history when chat changes
   useEffect(() => {
-    if (chatId === null) return;
+    if (chatId === null) {
+      setMessages([]);
+      return;
+    }
     getHistory(chatId).then((msgs) => {
       setMessages(msgs);
       setTimeout(scrollToBottom, 50);
+    }).catch(() => {
+      setMessages([]);
     });
   }, [chatId, scrollToBottom]);
 
   // Reset stream timeout whenever we get an event
-  const resetStreamTimeout = useCallback(() => {
-    if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
-    streamTimeoutRef.current = setTimeout(() => {
-      console.warn("Stream timeout — auto-unlocking input");
-      setIsStreaming(false);
-      setStreamPhase(null);
-      setStreamingText("");
-      setToolSteps([]);
-      setSendError("Response timed out. Please try again.");
-      streamingChatIdRef.current = null;
+  const resetStreamTimeout = useCallback((targetChatId: number) => {
+    const existingTimeout = streamTimeoutsRef.current.get(targetChatId);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+    const timeout = setTimeout(() => {
+      console.warn(`Stream timeout for chat ${targetChatId}; auto-unlocking input`);
+      updateChatRuntimeState(targetChatId, (state) => ({
+        ...state,
+        isStreaming: false,
+        streamPhase: null,
+        streamingText: "",
+        toolSteps: [],
+        sendError: "Response timed out. Please try again.",
+      }));
+      streamTimeoutsRef.current.delete(targetChatId);
     }, STREAM_TIMEOUT_MS);
-  }, []);
 
-  const clearStreamTimeout = useCallback(() => {
-    if (streamTimeoutRef.current) {
-      clearTimeout(streamTimeoutRef.current);
-      streamTimeoutRef.current = null;
+    streamTimeoutsRef.current.set(targetChatId, timeout);
+  }, [updateChatRuntimeState]);
+
+  const clearStreamTimeout = useCallback((targetChatId: number) => {
+    const existingTimeout = streamTimeoutsRef.current.get(targetChatId);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+      streamTimeoutsRef.current.delete(targetChatId);
     }
   }, []);
 
-  // Listen for streaming events — filter by chatId
+  useEffect(() => {
+    return () => {
+      for (const timeout of streamTimeoutsRef.current.values()) {
+        clearTimeout(timeout);
+      }
+      streamTimeoutsRef.current.clear();
+    };
+  }, []);
+
+  // Listen for streaming events and route them into per-chat runtime state
   useEffect(() => {
     const unlistenPromise = onAgentStream((event: AgentStreamEvent) => {
       const eventChatId = event.chat_id;
-      if (eventChatId !== chatIdRef.current) return;
-
-      resetStreamTimeout();
+      resetStreamTimeout(eventChatId);
 
       switch (event.type) {
         case "text_delta":
-          setStreamPhase("responding");
-          setStreamingText((prev) => prev + event.delta);
-          scrollToBottom();
+          updateChatRuntimeState(eventChatId, (state) => ({
+            ...state,
+            isStreaming: true,
+            streamPhase: "responding",
+            streamingText: state.streamingText + event.delta,
+          }));
+          if (eventChatId === chatIdRef.current) scrollToBottom();
           break;
         case "tool_start":
-          setStreamPhase("tooling");
-          setToolSteps((prev) => [...prev, { name: event.name, isRunning: true }]);
-          scrollToBottom();
+          updateChatRuntimeState(eventChatId, (state) => ({
+            ...state,
+            isStreaming: true,
+            streamPhase: "tooling",
+            toolSteps: [...state.toolSteps, { name: event.name, isRunning: true }],
+          }));
+          if (eventChatId === chatIdRef.current) scrollToBottom();
           break;
         case "tool_result":
-          setStreamPhase("waiting");
-          setToolSteps((prev) =>
-            prev.map((s) =>
+          updateChatRuntimeState(eventChatId, (state) => ({
+            ...state,
+            isStreaming: true,
+            streamPhase: "waiting",
+            toolSteps: state.toolSteps.map((s) =>
               s.name === event.name && s.isRunning
                 ? { ...s, isRunning: false, isError: event.is_error, preview: event.preview, durationMs: event.duration_ms }
                 : s
-            )
-          );
-          scrollToBottom();
+            ),
+          }));
+          if (eventChatId === chatIdRef.current) scrollToBottom();
           break;
         case "error":
-          clearStreamTimeout();
-          setIsStreaming(false);
-          setStreamPhase(null);
-          setStreamingText("");
-          setToolSteps([]);
-          setSendError(event.message);
-          streamingChatIdRef.current = null;
+          clearStreamTimeout(eventChatId);
+          updateChatRuntimeState(eventChatId, (state) => ({
+            ...state,
+            isStreaming: false,
+            streamPhase: null,
+            streamingText: "",
+            toolSteps: [],
+            sendError: event.message,
+          }));
           break;
         case "final_response":
-          clearStreamTimeout();
-          setStreamPhase("finalizing");
-          setToolSteps([]);
-          streamingChatIdRef.current = null;
-          if (chatIdRef.current !== null) {
-            const currentChatId = chatIdRef.current;
-            setTimeout(() => {
-              getHistory(currentChatId).then((msgs) => {
+          clearStreamTimeout(eventChatId);
+          updateChatRuntimeState(eventChatId, (state) => ({
+            ...state,
+            isStreaming: false,
+            streamPhase: "finalizing",
+            streamingText: "",
+            toolSteps: [],
+            sendError: null,
+          }));
+          setTimeout(() => {
+            getHistory(eventChatId).then((msgs) => {
+              if (eventChatId === chatIdRef.current) {
                 setMessages(msgs);
-                setStreamPhase(null);
-                setStreamingText("");
-                setIsStreaming(false);
                 setTimeout(scrollToBottom, 50);
+              }
 
-                // Auto-title: if title is "New Chat", derive from first user message
-                if (chatTitle === "New Chat" && msgs.length >= 2) {
-                  const firstUserMsg = msgs.find((m) => !m.is_from_bot);
-                  if (firstUserMsg) {
-                    const autoTitle =
-                      firstUserMsg.content.slice(0, 30).trim() +
-                      (firstUserMsg.content.length > 30 ? "..." : "");
-                    renameChat(currentChatId, autoTitle).then(() => {
-                      onTitleChanged?.();
-                    }).catch(() => {});
-                  }
+              updateChatRuntimeState(eventChatId, (state) => ({
+                ...state,
+                isStreaming: false,
+                streamPhase: null,
+                streamingText: "",
+                toolSteps: [],
+                sendError: null,
+              }));
+
+              if (chatTitle === "New Chat" && eventChatId === chatIdRef.current && msgs.length >= 2) {
+                const firstUserMsg = msgs.find((m) => !m.is_from_bot);
+                if (firstUserMsg) {
+                  const autoTitle =
+                    firstUserMsg.content.slice(0, 30).trim() +
+                    (firstUserMsg.content.length > 30 ? "..." : "");
+                  renameChat(eventChatId, autoTitle).then(() => {
+                    onTitleChanged?.();
+                  }).catch(() => {});
                 }
-              }).catch(() => {
-                setStreamPhase(null);
-                setIsStreaming(false);
-              });
-            }, 300);
-          } else {
-            setStreamPhase(null);
-            setStreamingText("");
-            setIsStreaming(false);
-          }
+              }
+            }).catch(() => {
+              updateChatRuntimeState(eventChatId, (state) => ({
+                ...state,
+                isStreaming: false,
+                streamPhase: null,
+              }));
+            });
+          }, 300);
+          if (eventChatId === chatIdRef.current) scrollToBottom();
           break;
       }
     });
 
     return () => {
       unlistenPromise.then((fn) => fn());
-      clearStreamTimeout();
     };
-  }, [scrollToBottom, resetStreamTimeout, clearStreamTimeout, chatTitle, onTitleChanged]);
+  }, [chatTitle, clearStreamTimeout, onTitleChanged, resetStreamTimeout, scrollToBottom, updateChatRuntimeState]);
 
   // File processing
   const processFiles = (files: File[]) => {
@@ -421,70 +493,80 @@ export default function ChatWindow({
     setTimeout(scrollToBottom, 50);
   }, [scrollToBottom]);
 
-  const enqueueMessage = useCallback((message: QueuedMessage) => {
-    const currentChatId = chatIdRef.current;
-    if (currentChatId === null) return;
-
-    queuedMessagesRef.current.push(message);
-    setQueuedMessages([...queuedMessagesRef.current]);
-    setQueuedCount(queuedMessagesRef.current.length);
+  const enqueueMessage = useCallback((targetChatId: number, message: QueuedMessage) => {
+    updateChatRuntimeState(targetChatId, (state) => ({
+      ...state,
+      sendError: null,
+      queuedMessages: [...state.queuedMessages, message],
+    }));
     resetComposer();
-    setSendError(null);
-  }, [resetComposer]);
+  }, [resetComposer, updateChatRuntimeState]);
 
   const dispatchMessage = useCallback(async (
+    targetChatId: number,
     message: QueuedMessage,
     addOptimistic: boolean,
   ) => {
-    const currentChatId = chatIdRef.current;
-    if ((!message.userText.trim() && (!message.attachmentDtos || message.attachmentDtos.length === 0)) || currentChatId === null) {
+    if ((!message.userText.trim() && (!message.attachmentDtos || message.attachmentDtos.length === 0))) {
       return;
     }
 
-    if (streamingChatIdRef.current !== null) {
+    const runtimeState = chatRuntimeStates[targetChatId] ?? createDefaultChatRuntimeState();
+    if (runtimeState.isStreaming) {
       return;
     }
 
-    if (addOptimistic) {
+    if (addOptimistic && targetChatId === chatIdRef.current) {
       appendMessageToTimeline(message.optimisticMessage);
     }
 
     resetComposer();
-    setIsStreaming(true);
-    setStreamPhase("thinking");
-    setStreamingText("");
-    setToolSteps([]);
-    setSendError(null);
-    streamingChatIdRef.current = currentChatId;
-    resetStreamTimeout();
+    updateChatRuntimeState(targetChatId, (state) => ({
+      ...state,
+      isStreaming: true,
+      streamPhase: "thinking",
+      streamingText: "",
+      toolSteps: [],
+      sendError: null,
+    }));
+    resetStreamTimeout(targetChatId);
 
     try {
       await sendMessage(
-        currentChatId,
+        targetChatId,
         message.userText,
         message.attachmentDtos && message.attachmentDtos.length > 0 ? message.attachmentDtos : undefined,
       );
     } catch (err) {
-      clearStreamTimeout();
-      setIsStreaming(false);
-      setStreamPhase(null);
-      streamingChatIdRef.current = null;
-      setSendError(err instanceof Error ? err.message : String(err));
+      clearStreamTimeout(targetChatId);
+      updateChatRuntimeState(targetChatId, (state) => ({
+        ...state,
+        isStreaming: false,
+        streamPhase: null,
+        sendError: err instanceof Error ? err.message : String(err),
+      }));
     }
-  }, [appendMessageToTimeline, clearStreamTimeout, resetComposer, resetStreamTimeout]);
+  }, [appendMessageToTimeline, chatRuntimeStates, clearStreamTimeout, resetComposer, resetStreamTimeout, updateChatRuntimeState]);
 
   useEffect(() => {
-    if (isStreaming || streamingChatIdRef.current !== null || queuedMessagesRef.current.length === 0) {
+    for (const [chatIdKey, runtimeState] of Object.entries(chatRuntimeStates)) {
+      if (runtimeState.isStreaming || runtimeState.queuedMessages.length === 0) {
+        continue;
+      }
+
+      const nextMessage = runtimeState.queuedMessages[0];
+      if (!nextMessage) {
+        continue;
+      }
+
+      updateChatRuntimeState(Number(chatIdKey), (state) => ({
+        ...state,
+        queuedMessages: state.queuedMessages.slice(1),
+      }));
+      void dispatchMessage(Number(chatIdKey), nextMessage, true);
       return;
     }
-
-    const nextMessage = queuedMessagesRef.current.shift();
-    setQueuedMessages([...queuedMessagesRef.current]);
-    setQueuedCount(queuedMessagesRef.current.length);
-    if (nextMessage) {
-      void dispatchMessage(nextMessage, true);
-    }
-  }, [dispatchMessage, isStreaming, queuedCount]);
+  }, [chatRuntimeStates, dispatchMessage, updateChatRuntimeState]);
 
   const handleSend = async () => {
     if ((!input.trim() && attachments.length === 0) || !chatId) return;
@@ -510,18 +592,23 @@ export default function ChatWindow({
       optimisticMessage: createOptimisticUserMessage(chatId, displayText),
     };
 
-    if (isStreaming || streamingChatIdRef.current !== null) {
+    if (isStreaming) {
       setIsInputModalOpen(false);
-      enqueueMessage(outgoing);
+      enqueueMessage(chatId, outgoing);
       return;
     }
 
     setIsInputModalOpen(false);
-    await dispatchMessage(outgoing, true);
+    await dispatchMessage(chatId, outgoing, true);
   };
 
   const handleRetry = () => {
-    setSendError(null);
+    if (chatId !== null) {
+      updateChatRuntimeState(chatId, (state) => ({
+        ...state,
+        sendError: null,
+      }));
+    }
     const lastUserMsg = [...messages].reverse().find((m) => !m.is_from_bot);
     if (lastUserMsg) {
       setInput(lastUserMsg.content);
@@ -535,24 +622,31 @@ export default function ChatWindow({
     if (!trimmed) return;
 
     if (trimmed === "[image]" || trimmed.startsWith("[image] ")) {
-      setSendError("Retry for image messages is not supported yet.");
+      updateChatRuntimeState(message.chat_id, (state) => ({
+        ...state,
+        sendError: "Retry for image messages is not supported yet.",
+      }));
       return;
     }
 
-    setSendError(null);
+    updateChatRuntimeState(message.chat_id, (state) => ({
+      ...state,
+      sendError: null,
+    }));
     const outgoing: QueuedMessage = {
       userText: trimmed,
       displayText: trimmed,
       optimisticMessage: createOptimisticUserMessage(message.chat_id, trimmed),
     };
 
-    if (isStreaming || streamingChatIdRef.current !== null) {
-      enqueueMessage(outgoing);
+    const runtimeState = chatRuntimeStates[message.chat_id] ?? createDefaultChatRuntimeState();
+    if (runtimeState.isStreaming) {
+      enqueueMessage(message.chat_id, outgoing);
       return;
     }
 
-    await dispatchMessage(outgoing, true);
-  }, [createOptimisticUserMessage, dispatchMessage, enqueueMessage, isReadOnly, isStreaming]);
+    await dispatchMessage(message.chat_id, outgoing, true);
+  }, [chatRuntimeStates, createOptimisticUserMessage, dispatchMessage, enqueueMessage, isReadOnly, updateChatRuntimeState]);
 
   const renderedMessages = useMemo(() => (
     messages.map((msg, idx) => (
