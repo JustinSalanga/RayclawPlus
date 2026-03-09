@@ -117,7 +117,7 @@ function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry }: Mess
       {isBot && (
         <div className="message-sender">
           <span className="message-sender-avatar"><Bot size={12} /></span>
-          RayClaw
+          VirusClaw
         </div>
       )}
       {!isBot && message.sender_name !== "user" && (

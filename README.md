@@ -1,12 +1,12 @@
-# RayClaw Desktop
+# VirusClaw Desktop
 
 [English](README.md) | [中文](README_CN.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-blue?logo=tauri)](https://tauri.app)
-[![RayClaw](https://img.shields.io/crates/v/rayclaw.svg?label=rayclaw)](https://crates.io/crates/rayclaw)
+[![VirusClaw](https://img.shields.io/crates/v/rayclaw.svg?label=rayclaw)](https://crates.io/crates/rayclaw)
 
-RayClaw Desktop is a native desktop client for [RayClaw](https://github.com/rayclaw/rayclaw), the multi-channel agentic AI runtime. Built with Tauri 2.x + React + TypeScript, it brings RayClaw's full agent engine — tool-calling, memory, streaming — to your desktop as a lightweight native app.
+VirusClaw Desktop is a native desktop client for [RayClaw](https://github.com/rayclaw/rayclaw), the multi-channel agentic AI runtime. Built with Tauri 2.x + React + TypeScript, it brings the full agent engine — tool-calling, memory, streaming — to your desktop as a lightweight native app.
 
 ## Features
 

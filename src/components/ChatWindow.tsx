@@ -146,11 +146,11 @@ export default function ChatWindow({
   const streamStatus = useMemo(() => {
     if (!isStreaming || !streamPhase) return null;
 
-    let label = "RayClaw is working...";
+    let label = "VirusClaw is working...";
 
     switch (streamPhase) {
       case "thinking":
-        label = "RayClaw is thinking...";
+        label = "VirusClaw is thinking...";
         break;
       case "tooling":
         label = runningToolCount > 0
@@ -658,8 +658,8 @@ export default function ChatWindow({
       <main className="chat-window chat-window-empty">
         <div className="chat-header" />
         <div className="chat-empty-state">
-          <div className="empty-state-icon">RC</div>
-          <h2>Welcome to RayClaw</h2>
+          <div className="empty-state-icon">VC</div>
+          <h2>Welcome to VirusClaw</h2>
           <p>Select a chat or start a new conversation</p>
           <div className="empty-state-actions">
             {onNewChat && (

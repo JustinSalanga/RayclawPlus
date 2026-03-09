@@ -105,21 +105,7 @@ pub struct ConfigDto {
 // ---------------------------------------------------------------------------
 
 fn home_dir() -> String {
-    std::env::var("HOME")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            std::env::var("USERPROFILE")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        })
-        .or_else(|| {
-            let home_drive = std::env::var("HOMEDRIVE").ok()?;
-            let home_path = std::env::var("HOMEPATH").ok()?;
-            let combined = format!("{home_drive}{home_path}");
-            (!combined.trim().is_empty()).then_some(combined)
-        })
-        .unwrap_or_else(|| ".".into())
+    crate::paths::user_home_dir()
 }
 
 fn expand_tilde(path: &str) -> String {
@@ -181,23 +167,60 @@ async fn require_state(state: &DesktopState) -> Result<Arc<AppState>, String> {
 }
 
 fn default_config_path() -> String {
-    let dir = format!("{}/.rayclaw", home_dir());
+    let dir = crate::paths::app_home_dir();
     let _ = std::fs::create_dir_all(&dir);
-    format!("{dir}/rayclaw.config.yaml")
+    crate::paths::config_path().to_string_lossy().to_string()
+}
+
+fn resolve_desktop_config_path() -> Result<Option<std::path::PathBuf>, String> {
+    let default_path = crate::paths::config_path();
+    match rayclaw::config::Config::resolve_config_path() {
+        Ok(Some(path)) => Ok(Some(path)),
+        Ok(None) => {
+            if default_path.exists() {
+                Ok(Some(default_path))
+            } else {
+                Ok(None)
+            }
+        }
+        Err(e) => {
+            if default_path.exists() {
+                debug!(
+                    "Ignoring Config::resolve_config_path error and using desktop default path: {e}"
+                );
+                Ok(Some(default_path))
+            } else {
+                Err(e.to_string())
+            }
+        }
+    }
 }
 
 /// Load config for Desktop without channel validation.
-/// This allows the Settings UI to read config even when no channels are enabled.
+/// This allows the desktop app to run even when no external chat channel is enabled.
+pub(crate) fn try_load_config_for_desktop() -> Result<Option<rayclaw::config::Config>, String> {
+    let Some(path) = resolve_desktop_config_path()? else {
+        return Ok(None);
+    };
+
+    let path_str = path.to_string_lossy().to_string();
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {path_str}: {e}"))?;
+    let config = serde_yaml::from_str(&content)
+        .map_err(|e| format!("Failed to parse {path_str}: {e}"))?;
+    Ok(Some(config))
+}
+
+/// Load config for settings UI without channel validation.
+/// Falls back to a default draft config if the saved file is missing or invalid.
 fn load_config_for_desktop() -> rayclaw::config::Config {
-    let path = default_config_path();
-    match std::fs::read_to_string(&path) {
-        Ok(content) => {
-            serde_yaml::from_str(&content).unwrap_or_else(|e| {
-                debug!("Failed to parse config: {e}");
-                default_config()
-            })
+    match try_load_config_for_desktop() {
+        Ok(Some(config)) => config,
+        Ok(None) => default_config(),
+        Err(e) => {
+            debug!("Failed to load config for desktop settings UI: {e}");
+            default_config()
         }
-        Err(_) => default_config(),
     }
 }
 
@@ -431,6 +454,9 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
         error!("save_config: failed to save: {e}");
         format!("Failed to save config: {e}")
     })?;
+    // Keep the running process pinned to the saved config file so reloads do not
+    // depend on the current working directory.
+    unsafe { std::env::set_var("RAYCLAW_CONFIG", &save_path) };
 
     // Abort old channel tasks
     let desktop = app.state::<DesktopState>();

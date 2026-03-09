@@ -1,4 +1,5 @@
 mod commands;
+mod paths;
 mod state;
 
 use std::sync::Arc;
@@ -16,7 +17,7 @@ use tracing::{error, info, warn};
 // ---------------------------------------------------------------------------
 
 fn expand_tilde(path: &str) -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let home = paths::user_home_dir();
     if let Some(rest) = path.strip_prefix("~/") {
         format!("{home}/{rest}")
     } else if path == "~" {
@@ -35,22 +36,20 @@ fn ensure_config_env() {
     if std::env::var("RAYCLAW_CONFIG").is_ok() {
         return; // Already set, respect user override
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let config_path = format!("{home}/.rayclaw/rayclaw.config.yaml");
-    if std::path::Path::new(&config_path).exists() {
+    let config_path = paths::config_path();
+    if config_path.exists() {
         // SAFETY: Called at app startup before any threads are spawned
-        unsafe { std::env::set_var("RAYCLAW_CONFIG", &config_path) };
+        unsafe { std::env::set_var("RAYCLAW_CONFIG", config_path) };
     }
 }
 
 fn init_logging() {
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let log_dir = format!("{home}/.rayclaw/logs");
+    let log_dir = paths::logs_dir();
     let _ = std::fs::create_dir_all(&log_dir);
 
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "rayclaw-desktop.log");
+    let file_appender = tracing_appender::rolling::daily(&log_dir, paths::LOG_FILE_NAME);
     let (file_writer, _guard) = tracing_appender::non_blocking(file_appender);
     // Leak guard so it lives for the process lifetime
     std::mem::forget(_guard);
@@ -74,7 +73,11 @@ fn init_logging() {
         )
         .init();
 
-    info!("Logging initialized — file: {log_dir}/rayclaw-desktop.log.*");
+    info!(
+        "Logging initialized — file: {}/{}.*",
+        log_dir.display(),
+        paths::LOG_FILE_NAME
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -363,7 +366,7 @@ pub(crate) fn start_channels(
 pub fn run() {
     ensure_config_env();
     init_logging();
-    info!("RayClaw Desktop v{} starting", env!("CARGO_PKG_VERSION"));
+    info!("VirusClaw Desktop v{} starting", env!("CARGO_PKG_VERSION"));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -376,8 +379,8 @@ pub fn run() {
 
             let (app_state, init_error, handles) = rt.block_on(async {
                 info!("Loading config...");
-                match Config::load() {
-                    Ok(config) => {
+                match commands::try_load_config_for_desktop() {
+                    Ok(Some(config)) => {
                         info!(
                             "Config loaded: provider={}, model={}, data_dir={}",
                             config.llm_provider, config.model, config.data_dir
@@ -393,9 +396,13 @@ pub fn run() {
                             }
                         }
                     }
-                    Err(e) => {
-                        info!("No config found ({e}) — showing setup screen");
+                    Ok(None) => {
+                        info!("No config found — showing setup screen");
                         (None, None, std::collections::HashMap::new())
+                    }
+                    Err(e) => {
+                        error!("Failed to load config: {e}");
+                        (None, Some(e), std::collections::HashMap::new())
                     }
                 }
             });

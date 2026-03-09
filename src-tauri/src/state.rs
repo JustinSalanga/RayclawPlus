@@ -6,15 +6,8 @@ use tokio::sync::RwLock;
 /// Per-channel enabled state, persisted to ~/.rayclaw/channel-enabled.json.
 pub type ChannelEnabledMap = HashMap<String, bool>;
 
-const ENABLED_FILE: &str = "channel-enabled.json";
-
-fn enabled_path() -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    format!("{home}/.rayclaw/{ENABLED_FILE}")
-}
-
 pub fn load_channel_enabled() -> ChannelEnabledMap {
-    let path = enabled_path();
+    let path = crate::paths::channel_enabled_path();
     std::fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -22,7 +15,10 @@ pub fn load_channel_enabled() -> ChannelEnabledMap {
 }
 
 pub fn save_channel_enabled(map: &ChannelEnabledMap) {
-    let path = enabled_path();
+    let path = crate::paths::channel_enabled_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     if let Ok(json) = serde_json::to_string_pretty(map) {
         let _ = std::fs::write(&path, json);
     }

@@ -1,8 +1,8 @@
 [package]
 name = "rayclaw-desktop"
 version = "0.1.0"
-description = "RayClaw Desktop - AI Agent Runtime"
-authors = ["RayClaw"]
+description = "VirusClaw Desktop - AI Agent Runtime"
+authors = ["VirusClaw"]
 edition = "2021"
 
 [lib]

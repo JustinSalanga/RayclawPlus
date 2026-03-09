@@ -1,12 +1,12 @@
-# RayClaw Desktop
+# VirusClaw Desktop
 
 [English](README.md) | [中文](README_CN.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-blue?logo=tauri)](https://tauri.app)
-[![RayClaw](https://img.shields.io/crates/v/rayclaw.svg?label=rayclaw)](https://crates.io/crates/rayclaw)
+[![VirusClaw](https://img.shields.io/crates/v/rayclaw.svg?label=rayclaw)](https://crates.io/crates/rayclaw)
 
-RayClaw Desktop 是 [RayClaw](https://github.com/rayclaw/rayclaw) 多频道 AI Agent 运行时的原生桌面客户端。基于 Tauri 2.x + React + TypeScript 构建，将 RayClaw 完整的 Agent 引擎 — 工具调用、记忆系统、流式输出 — 以轻量原生应用的形式带到桌面。
+VirusClaw Desktop 是 [RayClaw](https://github.com/rayclaw/rayclaw) 多频道 AI Agent 运行时的原生桌面客户端。基于 Tauri 2.x + React + TypeScript 构建，将完整的 Agent 引擎 — 工具调用、记忆系统、流式输出 — 以轻量原生应用的形式带到桌面。
 
 ## 功能特性
 

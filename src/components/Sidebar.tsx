@@ -240,7 +240,7 @@ export default function Sidebar({
   return (
     <aside className="sidebar" style={{ width, minWidth: width }}>
       <div className="sidebar-header">
-        <h2>RayClaw</h2>
+        <h2>VirusClaw</h2>
         <div className="sidebar-header-actions">
           <button
             className="btn-icon"

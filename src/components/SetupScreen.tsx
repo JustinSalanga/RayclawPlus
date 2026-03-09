@@ -9,14 +9,14 @@ export default function SetupScreen({ error, onConfigure }: SetupScreenProps) {
   return (
     <div className="setup-screen">
       <div className="setup-card">
-        <img src={logoText} alt="RayClaw" className="setup-logo" />
-        <h1>RayClaw Desktop</h1>
+        <img src={logoText} alt="VirusClaw" className="setup-logo" />
+        <h1>VirusClaw Desktop</h1>
         <p className="setup-subtitle">Configuration required</p>
 
         <div className="setup-message">
           {error && <p className="setup-error">{error}</p>}
           <p>
-            RayClaw needs an LLM provider and API key to get started.
+            VirusClaw needs an LLM provider and API key to get started.
           </p>
         </div>
 
