@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2, CheckCircle2, XCircle } from "lucide-react";
 
 interface ToolStepProps {
@@ -11,6 +11,12 @@ interface ToolStepProps {
 
 export default function ToolStep({ name, isError, preview, durationMs, isRunning }: ToolStepProps) {
   const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (preview && !isRunning) {
+      setExpanded(true);
+    }
+  }, [isRunning, preview]);
 
   return (
     <div className={`tool-step ${isError ? "tool-step-error" : ""}`}>

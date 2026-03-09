@@ -261,6 +261,7 @@ export default function ChatWindow({
                 : s
             )
           );
+          scrollToBottom();
           break;
         case "error":
           clearStreamTimeout();
@@ -360,28 +361,14 @@ export default function ChatWindow({
     setAttachments((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const handleSend = async () => {
-    if ((!input.trim() && attachments.length === 0) || !chatId || isStreaming) return;
+  const submitMessage = useCallback(async (
+    userText: string,
+    attachmentDtos?: Attachment[],
+    displayText?: string,
+  ) => {
+    if ((!userText.trim() && (!attachmentDtos || attachmentDtos.length === 0)) || !chatId || isStreaming) return;
 
-    const userText = input.trim();
-    const currentAttachments = [...attachments];
-
-    // Build attachment DTOs: extract raw base64 from dataUrl
-    const attachmentDtos: Attachment[] = currentAttachments
-      .filter((a) => a.type.startsWith("image/"))
-      .map((a) => {
-        // dataUrl format: "data:image/png;base64,iVBOR..."
-        const base64 = a.dataUrl.split(",")[1] || "";
-        return { data: base64, media_type: a.type, name: a.name };
-      });
-
-    // Display text for the user message bubble
-    const displayText = attachmentDtos.length > 0 && userText
-      ? `[image] ${userText}`
-      : attachmentDtos.length > 0
-        ? "[image]"
-        : userText;
-
+    const renderedText = displayText ?? userText.trim();
     setInput("");
     setAttachments([]);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
@@ -397,7 +384,7 @@ export default function ChatWindow({
       id: crypto.randomUUID(),
       chat_id: chatId,
       sender_name: "user",
-      content: displayText,
+      content: renderedText,
       is_from_bot: false,
       timestamp: new Date().toISOString(),
     };
@@ -405,7 +392,7 @@ export default function ChatWindow({
     setTimeout(scrollToBottom, 50);
 
     try {
-      await sendMessage(chatId, userText, attachmentDtos.length > 0 ? attachmentDtos : undefined);
+      await sendMessage(chatId, userText, attachmentDtos && attachmentDtos.length > 0 ? attachmentDtos : undefined);
     } catch (err) {
       clearStreamTimeout();
       setIsStreaming(false);
@@ -413,6 +400,27 @@ export default function ChatWindow({
       streamingChatIdRef.current = null;
       setSendError(err instanceof Error ? err.message : String(err));
     }
+  }, [chatId, clearStreamTimeout, isStreaming, resetStreamTimeout, scrollToBottom]);
+
+  const handleSend = async () => {
+    if ((!input.trim() && attachments.length === 0) || !chatId || isStreaming) return;
+
+    const userText = input.trim();
+    const currentAttachments = [...attachments];
+    const attachmentDtos: Attachment[] = currentAttachments
+      .filter((a) => a.type.startsWith("image/"))
+      .map((a) => {
+        const base64 = a.dataUrl.split(",")[1] || "";
+        return { data: base64, media_type: a.type, name: a.name };
+      });
+
+    const displayText = attachmentDtos.length > 0 && userText
+      ? `[image] ${userText}`
+      : attachmentDtos.length > 0
+        ? "[image]"
+        : userText;
+
+    await submitMessage(userText, attachmentDtos, displayText);
   };
 
   const handleRetry = () => {
@@ -422,6 +430,21 @@ export default function ChatWindow({
       setInput(lastUserMsg.content);
     }
   };
+
+  const handleRetryMessage = useCallback(async (message: StoredMessage) => {
+    if (isReadOnly || isStreaming) return;
+
+    const trimmed = message.content.trim();
+    if (!trimmed) return;
+
+    if (trimmed === "[image]" || trimmed.startsWith("[image] ")) {
+      setSendError("Retry for image messages is not supported yet.");
+      return;
+    }
+
+    setSendError(null);
+    await submitMessage(trimmed, undefined, trimmed);
+  }, [isReadOnly, isStreaming, submitMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -626,6 +649,7 @@ export default function ChatWindow({
             message={msg}
             isSearchMatch={searchMatches.includes(idx)}
             isCurrentMatch={searchMatches[currentMatchIdx] === idx}
+            onRetry={!msg.is_from_bot ? handleRetryMessage : undefined}
           />
         ))}
 

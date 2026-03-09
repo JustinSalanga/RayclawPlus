@@ -3,13 +3,14 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Copy, Check, Bot, ChevronDown, ChevronUp, FileDown } from "lucide-react";
+import { Copy, Check, Bot, ChevronDown, ChevronUp, FileDown, RotateCcw } from "lucide-react";
 import type { StoredMessage } from "../types";
 
 interface MessageBubbleProps {
   message: StoredMessage;
   isSearchMatch?: boolean;
   isCurrentMatch?: boolean;
+  onRetry?: (message: StoredMessage) => void;
 }
 
 function CodeBlock({ className, children }: { className?: string; children: React.ReactNode }) {
@@ -67,7 +68,7 @@ function messageFilename(message: StoredMessage) {
   return `${sender}-${stamp}.md`;
 }
 
-export default function MessageBubble({ message, isSearchMatch, isCurrentMatch }: MessageBubbleProps) {
+export default function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry }: MessageBubbleProps) {
   const isBot = message.is_from_bot;
   const time = new Date(message.timestamp).toLocaleTimeString([], {
     hour: "2-digit",
@@ -146,10 +147,22 @@ export default function MessageBubble({ message, isSearchMatch, isCurrentMatch }
             {copied ? <Check size={13} /> : <Copy size={13} />}
             {copied ? "Copied" : "Copy"}
           </button>
-          <button className="message-action-btn" onClick={handleDownloadMessage} title="Download markdown">
-            {downloaded ? <Check size={13} /> : <FileDown size={13} />}
-            {downloaded ? "Saved" : "Download"}
-          </button>
+          {isBot ? (
+            <button className="message-action-btn" onClick={handleDownloadMessage} title="Download markdown">
+              {downloaded ? <Check size={13} /> : <FileDown size={13} />}
+              {downloaded ? "Saved" : "Download"}
+            </button>
+          ) : (
+            <button
+              className="message-action-btn"
+              onClick={() => onRetry?.(message)}
+              title="Retry message"
+              disabled={!onRetry}
+            >
+              <RotateCcw size={13} />
+              Retry
+            </button>
+          )}
         </div>
         <span className="message-time">{time}</span>
       </div>
