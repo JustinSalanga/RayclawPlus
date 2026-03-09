@@ -260,16 +260,60 @@ body {
 .message-content h2 { font-size: 16px; }
 .message-content h3 { font-size: 15px; }
 
+.message-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.message-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+.message-action-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: var(--border-hover);
+}
+
 .message-time {
   display: block;
   font-size: 11px;
   color: var(--muted);
-  margin-top: 6px;
   text-align: right;
 }
 
 .message-user .message-time {
   color: rgba(255, 255, 255, 0.7);
+}
+
+.message-user .message-action-btn {
+  border-color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.message-user .message-action-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.35);
 }
 
 /* Code */
@@ -308,6 +352,44 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.chat-status-indicator {
+  align-self: flex-start;
+  max-width: 75%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--paper-warm);
+  color: var(--charcoal-light);
+  font-size: 12px;
+}
+
+.chat-status-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-weight: 500;
+}
+
+.chat-status-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-hover);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: spin 0.9s linear infinite;
+}
+
+.chat-status-detail {
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .tool-step {

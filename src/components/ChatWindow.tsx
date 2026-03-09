@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import MessageBubble from "./MessageBubble";
+import MessageBubble, { BotMessageMarkdown } from "./MessageBubble";
 import ToolStep from "./ToolStep";
 import { MessageSquarePlus, Settings, X, ChevronUp, ChevronDown, Paperclip, Sparkles } from "lucide-react";
 import { sendMessage, getHistory, onAgentStream, renameChat, readSoul, saveSoul, type Attachment } from "../lib/tauri-api";
@@ -20,6 +20,8 @@ interface FileAttachment {
   dataUrl: string;
   size: number;
 }
+
+type StreamPhase = "thinking" | "tooling" | "waiting" | "responding" | "finalizing";
 
 interface ChatWindowProps {
   chatId: number | null;
@@ -51,6 +53,7 @@ export default function ChatWindow({
   const [messages, setMessages] = useState<StoredMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamPhase, setStreamPhase] = useState<StreamPhase | null>(null);
   const [streamingText, setStreamingText] = useState("");
   const [toolSteps, setToolSteps] = useState<ToolStepData[]>([]);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -113,6 +116,43 @@ export default function ChatWindow({
       .filter((i) => i !== -1);
   }, [messages, searchQuery]);
 
+  const runningToolCount = toolSteps.filter((step) => step.isRunning).length;
+  const completedToolCount = toolSteps.length - runningToolCount;
+
+  const streamStatus = useMemo(() => {
+    if (!isStreaming || !streamPhase) return null;
+
+    let label = "RayClaw is working...";
+
+    switch (streamPhase) {
+      case "thinking":
+        label = "RayClaw is thinking...";
+        break;
+      case "tooling":
+        label = runningToolCount > 0
+          ? `Running ${runningToolCount} tool${runningToolCount === 1 ? "" : "s"}...`
+          : "Running tools...";
+        break;
+      case "waiting":
+        label = completedToolCount > 0
+          ? "Tool work finished. Waiting for the response..."
+          : "Waiting for the response...";
+        break;
+      case "responding":
+        label = "Writing the response...";
+        break;
+      case "finalizing":
+        label = "Finishing the response...";
+        break;
+    }
+
+    const detail = toolSteps.length > 0
+      ? `${completedToolCount} done${runningToolCount > 0 ? `, ${runningToolCount} running` : ""}`
+      : null;
+
+    return { label, detail };
+  }, [completedToolCount, isStreaming, runningToolCount, streamPhase, toolSteps.length]);
+
   // Scroll to current match
   useEffect(() => {
     if (searchMatches.length === 0) return;
@@ -157,6 +197,7 @@ export default function ChatWindow({
     setSoulOpen(false);
     if (streamingChatIdRef.current !== chatId) {
       setIsStreaming(false);
+      setStreamPhase(null);
       setStreamingText("");
       setToolSteps([]);
     }
@@ -177,6 +218,7 @@ export default function ChatWindow({
     streamTimeoutRef.current = setTimeout(() => {
       console.warn("Stream timeout — auto-unlocking input");
       setIsStreaming(false);
+      setStreamPhase(null);
       setStreamingText("");
       setToolSteps([]);
       setSendError("Response timed out. Please try again.");
@@ -201,14 +243,17 @@ export default function ChatWindow({
 
       switch (event.type) {
         case "text_delta":
+          setStreamPhase("responding");
           setStreamingText((prev) => prev + event.delta);
           scrollToBottom();
           break;
         case "tool_start":
+          setStreamPhase("tooling");
           setToolSteps((prev) => [...prev, { name: event.name, isRunning: true }]);
           scrollToBottom();
           break;
         case "tool_result":
+          setStreamPhase("waiting");
           setToolSteps((prev) =>
             prev.map((s) =>
               s.name === event.name && s.isRunning
@@ -220,6 +265,7 @@ export default function ChatWindow({
         case "error":
           clearStreamTimeout();
           setIsStreaming(false);
+          setStreamPhase(null);
           setStreamingText("");
           setToolSteps([]);
           setSendError(event.message);
@@ -227,6 +273,7 @@ export default function ChatWindow({
           break;
         case "final_response":
           clearStreamTimeout();
+          setStreamPhase("finalizing");
           setToolSteps([]);
           streamingChatIdRef.current = null;
           if (chatIdRef.current !== null) {
@@ -234,6 +281,7 @@ export default function ChatWindow({
             setTimeout(() => {
               getHistory(currentChatId).then((msgs) => {
                 setMessages(msgs);
+                setStreamPhase(null);
                 setStreamingText("");
                 setIsStreaming(false);
                 setTimeout(scrollToBottom, 50);
@@ -251,10 +299,12 @@ export default function ChatWindow({
                   }
                 }
               }).catch(() => {
+                setStreamPhase(null);
                 setIsStreaming(false);
               });
             }, 300);
           } else {
+            setStreamPhase(null);
             setStreamingText("");
             setIsStreaming(false);
           }
@@ -336,6 +386,7 @@ export default function ChatWindow({
     setAttachments([]);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     setIsStreaming(true);
+    setStreamPhase("thinking");
     setStreamingText("");
     setToolSteps([]);
     setSendError(null);
@@ -358,6 +409,7 @@ export default function ChatWindow({
     } catch (err) {
       clearStreamTimeout();
       setIsStreaming(false);
+      setStreamPhase(null);
       streamingChatIdRef.current = null;
       setSendError(err instanceof Error ? err.message : String(err));
     }
@@ -590,16 +642,7 @@ export default function ChatWindow({
         {isStreaming && streamingText && (
           <div className="message-bubble message-bot message-streaming">
             <div className="message-content">
-              <p>{streamingText}</p>
-            </div>
-          </div>
-        )}
-
-        {/* Typing indicator */}
-        {isStreaming && !streamingText && toolSteps.length === 0 && (
-          <div className="message-bubble message-bot">
-            <div className="message-content typing-indicator">
-              <span></span><span></span><span></span>
+              <BotMessageMarkdown content={streamingText} />
             </div>
           </div>
         )}
@@ -611,6 +654,18 @@ export default function ChatWindow({
               <p>{sendError}</p>
               <button className="btn-retry" onClick={handleRetry}>Retry</button>
             </div>
+          </div>
+        )}
+
+        {streamStatus && (
+          <div className={`chat-status-indicator chat-status-${streamPhase}`}>
+            <div className="chat-status-main">
+              <span className="chat-status-spinner" aria-hidden="true" />
+              <span>{streamStatus.label}</span>
+            </div>
+            {streamStatus.detail && (
+              <span className="chat-status-detail">{streamStatus.detail}</span>
+            )}
           </div>
         )}
 

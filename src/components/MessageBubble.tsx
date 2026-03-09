@@ -1,7 +1,9 @@
 import { useState, useCallback } from "react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Copy, Check, Bot, ChevronDown, ChevronUp } from "lucide-react";
+import { Copy, Check, Bot, ChevronDown, ChevronUp, FileDown } from "lucide-react";
 import type { StoredMessage } from "../types";
 
 interface MessageBubbleProps {
@@ -34,7 +36,36 @@ function CodeBlock({ className, children }: { className?: string; children: Reac
   );
 }
 
+export function BotMessageMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        code({ className, children, ...props }) {
+          const isInline = !className && !String(children).includes("\n");
+          return isInline ? (
+            <code className="inline-code" {...props}>{children}</code>
+          ) : (
+            <CodeBlock className={className}>{children}</CodeBlock>
+          );
+        },
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+}
+
 const COLLAPSE_LINE_THRESHOLD = 30;
+
+function messageFilename(message: StoredMessage) {
+  const sender = (message.is_from_bot ? "assistant" : message.sender_name || "message")
+    .replace(/[^a-zA-Z0-9_-]/g, "_");
+  const stamp = new Date(message.timestamp)
+    .toISOString()
+    .replace(/[:.]/g, "-");
+  return `${sender}-${stamp}.md`;
+}
 
 export default function MessageBubble({ message, isSearchMatch, isCurrentMatch }: MessageBubbleProps) {
   const isBot = message.is_from_bot;
@@ -46,12 +77,36 @@ export default function MessageBubble({ message, isSearchMatch, isCurrentMatch }
   const lineCount = message.content.split("\n").length;
   const isLong = isBot && lineCount > COLLAPSE_LINE_THRESHOLD;
   const [collapsed, setCollapsed] = useState(isLong);
+  const [copied, setCopied] = useState(false);
+  const [downloaded, setDownloaded] = useState(false);
 
   const matchClass = isCurrentMatch
     ? "message-search-current"
     : isSearchMatch
       ? "message-search-match"
       : "";
+
+  const handleCopyMessage = useCallback(() => {
+    navigator.clipboard.writeText(message.content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [message.content]);
+
+  const handleDownloadMessage = useCallback(async () => {
+    try {
+      const filePath = await save({
+        defaultPath: messageFilename(message),
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      if (!filePath) return;
+      await writeTextFile(filePath, message.content);
+      setDownloaded(true);
+      setTimeout(() => setDownloaded(false), 2000);
+    } catch (err) {
+      console.error("Failed to save message:", err);
+    }
+  }, [message]);
 
   return (
     <div
@@ -71,21 +126,7 @@ export default function MessageBubble({ message, isSearchMatch, isCurrentMatch }
       )}
       <div className={`message-content ${isLong && collapsed ? "message-content-collapsed" : ""}`}>
         {isBot ? (
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              code({ className, children, ...props }) {
-                const isInline = !className && !String(children).includes("\n");
-                return isInline ? (
-                  <code className="inline-code" {...props}>{children}</code>
-                ) : (
-                  <CodeBlock className={className}>{children}</CodeBlock>
-                );
-              },
-            }}
-          >
-            {message.content}
-          </ReactMarkdown>
+          <BotMessageMarkdown content={message.content} />
         ) : (
           <p>{message.content}</p>
         )}
@@ -99,7 +140,19 @@ export default function MessageBubble({ message, isSearchMatch, isCurrentMatch }
           )}
         </button>
       )}
-      <span className="message-time">{time}</span>
+      <div className="message-footer">
+        <div className="message-actions">
+          <button className="message-action-btn" onClick={handleCopyMessage} title="Copy markdown">
+            {copied ? <Check size={13} /> : <Copy size={13} />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <button className="message-action-btn" onClick={handleDownloadMessage} title="Download markdown">
+            {downloaded ? <Check size={13} /> : <FileDown size={13} />}
+            {downloaded ? "Saved" : "Download"}
+          </button>
+        </div>
+        <span className="message-time">{time}</span>
+      </div>
     </div>
   );
 }
