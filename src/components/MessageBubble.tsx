@@ -14,7 +14,7 @@ interface MessageBubbleProps {
   onRetry?: (message: StoredMessage) => void;
 }
 
-type MediaKind = "image" | "audio" | "video";
+type MediaKind = "image" | "audio" | "video" | "pdf";
 
 interface MediaReference {
   original: string;
@@ -49,6 +49,7 @@ interface ZoomAnchor {
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif"]);
 const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "ogg", "m4a", "flac", "aac", "opus"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mov", "m4v", "avi", "mkv"]);
+const PDF_EXTENSIONS = new Set(["pdf"]);
 const IMAGE_PREVIEW_MIN_ZOOM = 0.5;
 const IMAGE_PREVIEW_MAX_ZOOM = 20;
 const IMAGE_PREVIEW_ZOOM_STEP = 0.2;
@@ -84,6 +85,7 @@ function mediaKindForPath(raw: string): MediaKind | null {
   if (IMAGE_EXTENSIONS.has(ext)) return "image";
   if (AUDIO_EXTENSIONS.has(ext)) return "audio";
   if (VIDEO_EXTENSIONS.has(ext)) return "video";
+  if (PDF_EXTENSIONS.has(ext)) return "pdf";
   return null;
 }
 
@@ -110,8 +112,8 @@ function extractMediaReferences(content: string): MediaReference[] {
   const seen = new Set<string>();
   const refs: MediaReference[] = [];
   const patterns = [
-    /`((?:[A-Za-z]:[\\/]|\/|\\\\|file:\/\/|https?:\/\/)[^`\n]+\.(?:png|jpe?g|gif|webp|bmp|svg|avif|mp3|wav|ogg|m4a|flac|aac|opus|mp4|webm|mov|m4v|avi|mkv)(?:[?#][^`\n]*)?)`/gi,
-    /((?:[A-Za-z]:[\\/]|\/|\\\\|file:\/\/|https?:\/\/)[^\s<>"')\]]+\.(?:png|jpe?g|gif|webp|bmp|svg|avif|mp3|wav|ogg|m4a|flac|aac|opus|mp4|webm|mov|m4v|avi|mkv)(?:[?#][^\s<>"')\]]*)?)/gi,
+    /`((?:[A-Za-z]:[\\/]|\/|\\\\|file:\/\/|https?:\/\/)[^`\n]+\.(?:png|jpe?g|gif|webp|bmp|svg|avif|mp3|wav|ogg|m4a|flac|aac|opus|mp4|webm|mov|m4v|avi|mkv|pdf)(?:[?#][^`\n]*)?)`/gi,
+    /((?:[A-Za-z]:[\\/]|\/|\\\\|file:\/\/|https?:\/\/)[^\s<>"')\]]+\.(?:png|jpe?g|gif|webp|bmp|svg|avif|mp3|wav|ogg|m4a|flac|aac|opus|mp4|webm|mov|m4v|avi|mkv|pdf)(?:[?#][^\s<>"')\]]*)?)/gi,
   ];
 
   for (const pattern of patterns) {
@@ -156,6 +158,18 @@ function InlineMedia({
 
   if (media.kind === "audio") {
     return <audio className="message-media message-media-audio" src={media.source} controls preload="metadata" />;
+  }
+
+  if (media.kind === "pdf") {
+    return (
+      <div className="message-media message-media-pdf-frame">
+        <iframe
+          className="message-media-pdf"
+          src={media.source}
+          title={media.original}
+        />
+      </div>
+    );
   }
 
   return <video className="message-media message-media-video" src={media.source} controls preload="metadata" playsInline />;

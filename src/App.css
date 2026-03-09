@@ -2241,6 +2241,28 @@ body {
   max-height: 420px;
 }
 
+.message-media-pdf-frame {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.message-media-pdf {
+  display: block;
+  width: min(100%, 720px);
+  height: min(70vh, 640px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: white;
+}
+
+.message-media-pdf-link {
+  width: fit-content;
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
 .message-image-modal-overlay {
   position: fixed;
   inset: 0;
