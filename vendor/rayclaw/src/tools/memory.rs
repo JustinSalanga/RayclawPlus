@@ -10,6 +10,21 @@ use crate::memory_quality;
 
 use super::{auth_context_from_input, authorize_chat_access, schema_object, Tool, ToolResult};
 
+fn resolve_scope(input: &serde_json::Value) -> &str {
+    input
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .or_else(|| auth_context_from_input(input).map(|_| "chat"))
+        .unwrap_or("chat")
+}
+
+fn resolve_chat_id(input: &serde_json::Value) -> Option<i64> {
+    input
+        .get("chat_id")
+        .and_then(|v| v.as_i64())
+        .or_else(|| auth_context_from_input(input).map(|auth| auth.caller_chat_id))
+}
+
 pub struct ReadMemoryTool {
     groups_dir: PathBuf,
 }
@@ -50,15 +65,12 @@ impl Tool for ReadMemoryTool {
     }
 
     async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let scope = match input.get("scope").and_then(|v| v.as_str()) {
-            Some(s) => s,
-            None => return ToolResult::error("Missing 'scope' parameter".into()),
-        };
+        let scope = resolve_scope(&input);
 
         let path = match scope {
             "global" => self.groups_dir.join("AGENTS.md"),
             "chat" => {
-                let chat_id = match input.get("chat_id").and_then(|v| v.as_i64()) {
+                let chat_id = match resolve_chat_id(&input) {
                     Some(id) => id,
                     None => return ToolResult::error("Missing 'chat_id' for chat scope".into()),
                 };
@@ -131,10 +143,7 @@ impl Tool for WriteMemoryTool {
     }
 
     async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let scope = match input.get("scope").and_then(|v| v.as_str()) {
-            Some(s) => s,
-            None => return ToolResult::error("Missing 'scope' parameter".into()),
-        };
+        let scope = resolve_scope(&input);
         let content = match input.get("content").and_then(|v| v.as_str()) {
             Some(c) => c,
             None => return ToolResult::error("Missing 'content' parameter".into()),
@@ -153,7 +162,7 @@ impl Tool for WriteMemoryTool {
                 (self.groups_dir.join("AGENTS.md"), None)
             }
             "chat" => {
-                let chat_id = match input.get("chat_id").and_then(|v| v.as_i64()) {
+                let chat_id = match resolve_chat_id(&input) {
                     Some(id) => id,
                     None => return ToolResult::error("Missing 'chat_id' for chat scope".into()),
                 };
@@ -293,13 +302,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_write_memory_missing_scope() {
+    async fn test_write_memory_defaults_to_chat_scope_from_auth() {
         let dir = test_dir();
         let db = test_db(&dir);
-        let tool = WriteMemoryTool::new(dir.to_str().unwrap(), db);
-        let result = tool.execute(json!({"content": "data"})).await;
-        assert!(result.is_error);
-        assert!(result.content.contains("Missing 'scope'"));
+        let tool = WriteMemoryTool::new(dir.to_str().unwrap(), db.clone());
+        let result = tool
+            .execute(json!({
+                "content": "user prefers Rust",
+                "__rayclaw_auth": {
+                    "caller_chat_id": 42,
+                    "control_chat_ids": []
+                }
+            }))
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+        let mems = db.get_all_memories_for_chat(Some(42)).unwrap();
+        assert_eq!(mems.len(), 1);
+        assert_eq!(mems[0].content, "user prefers Rust");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

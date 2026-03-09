@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { memo, useState, useCallback } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import ReactMarkdown from "react-markdown";
@@ -37,7 +37,7 @@ function CodeBlock({ className, children }: { className?: string; children: Reac
   );
 }
 
-export function BotMessageMarkdown({ content }: { content: string }) {
+export const BotMessageMarkdown = memo(function BotMessageMarkdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -55,7 +55,7 @@ export function BotMessageMarkdown({ content }: { content: string }) {
       {content}
     </ReactMarkdown>
   );
-}
+});
 
 const COLLAPSE_LINE_THRESHOLD = 30;
 
@@ -68,7 +68,7 @@ function messageFilename(message: StoredMessage) {
   return `${sender}-${stamp}.md`;
 }
 
-export default function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry }: MessageBubbleProps) {
+function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry }: MessageBubbleProps) {
   const isBot = message.is_from_bot;
   const time = new Date(message.timestamp).toLocaleTimeString([], {
     hour: "2-digit",
@@ -147,20 +147,16 @@ export default function MessageBubble({ message, isSearchMatch, isCurrentMatch, 
             {copied ? <Check size={13} /> : <Copy size={13} />}
             {copied ? "Copied" : "Copy"}
           </button>
-          {isBot ? (
+          {!isBot && onRetry && (
+            <button className="message-action-btn" onClick={() => onRetry(message)} title="Retry message">
+              <RotateCcw size={13} />
+              Retry
+            </button>
+          )}
+          {isBot && (
             <button className="message-action-btn" onClick={handleDownloadMessage} title="Download markdown">
               {downloaded ? <Check size={13} /> : <FileDown size={13} />}
               {downloaded ? "Saved" : "Download"}
-            </button>
-          ) : (
-            <button
-              className="message-action-btn"
-              onClick={() => onRetry?.(message)}
-              title="Retry message"
-              disabled={!onRetry}
-            >
-              <RotateCcw size={13} />
-              Retry
             </button>
           )}
         </div>
@@ -169,3 +165,18 @@ export default function MessageBubble({ message, isSearchMatch, isCurrentMatch, 
     </div>
   );
 }
+
+const MemoizedMessageBubble = memo(
+  MessageBubble,
+  (prev, next) =>
+    prev.message === next.message &&
+    prev.isSearchMatch === next.isSearchMatch &&
+    prev.isCurrentMatch === next.isCurrentMatch &&
+    prev.onRetry === next.onRetry,
+);
+
+BotMessageMarkdown.displayName = "BotMessageMarkdown";
+MessageBubble.displayName = "MessageBubble";
+MemoizedMessageBubble.displayName = "MemoizedMessageBubble";
+
+export default MemoizedMessageBubble;

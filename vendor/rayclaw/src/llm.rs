@@ -604,6 +604,7 @@ fn build_stream_response(
     usage: Option<Usage>,
 ) -> MessagesResponse {
     let mut content = Vec::new();
+    let mut saw_valid_tool_use = false;
     for index in ordered_indexes {
         if let Some(text) = text_blocks.get(&index) {
             if !text.is_empty() {
@@ -611,11 +612,16 @@ fn build_stream_response(
             }
         }
         if let Some(tool) = tool_blocks.get(&index) {
-            content.push(ResponseContentBlock::ToolUse {
-                id: tool.id.clone(),
-                name: tool.name.clone(),
-                input: parse_tool_input(&tool.input_json),
-            });
+            if tool.name.trim().is_empty() {
+                warn!("Dropping streamed tool call with empty name (id={})", tool.id);
+            } else {
+                content.push(ResponseContentBlock::ToolUse {
+                    id: tool.id.clone(),
+                    name: tool.name.clone(),
+                    input: parse_tool_input(&tool.input_json),
+                });
+                saw_valid_tool_use = true;
+            }
         }
     }
 
@@ -627,7 +633,10 @@ fn build_stream_response(
 
     MessagesResponse {
         content,
-        stop_reason: normalize_stop_reason(stop_reason),
+        stop_reason: match normalize_stop_reason(stop_reason).as_deref() {
+            Some("tool_use") if !saw_valid_tool_use => Some("end_turn".into()),
+            other => other.map(str::to_string),
+        },
         usage,
     }
 }
@@ -1534,6 +1543,10 @@ fn translate_oai_responses_response(resp: OaiResponsesResponse) -> MessagesRespo
                 name,
                 arguments,
             } => {
+                if name.trim().is_empty() {
+                    warn!("Dropping responses API tool call with empty name");
+                    continue;
+                }
                 let parsed_args: serde_json::Value =
                     serde_json::from_str(&arguments).unwrap_or_default();
                 let call_id = call_id.or(id).unwrap_or_else(|| {
@@ -1595,6 +1608,10 @@ fn translate_oai_response(oai: OaiResponse) -> MessagesResponse {
 
     if let Some(tool_calls) = choice.message.tool_calls {
         for tc in tool_calls {
+            if tc.function.name.trim().is_empty() {
+                warn!("Dropping tool call with empty name (id={})", tc.id);
+                continue;
+            }
             let input: serde_json::Value =
                 serde_json::from_str(&tc.function.arguments).unwrap_or_default();
             content.push(ResponseContentBlock::ToolUse {
@@ -1611,8 +1628,12 @@ fn translate_oai_response(oai: OaiResponse) -> MessagesResponse {
         });
     }
 
+    let saw_valid_tool_use = content
+        .iter()
+        .any(|block| matches!(block, ResponseContentBlock::ToolUse { .. }));
     let stop_reason = match choice.finish_reason.as_deref() {
-        Some("tool_calls") => Some("tool_use".into()),
+        Some("tool_calls") if saw_valid_tool_use => Some("tool_use".into()),
+        Some("tool_calls") => Some("end_turn".into()),
         Some("length") => Some("max_tokens".into()),
         _ => Some("end_turn".into()),
     };
@@ -1905,6 +1926,32 @@ mod tests {
     }
 
     #[test]
+    fn test_translate_oai_response_drops_empty_tool_name() {
+        let oai = OaiResponse {
+            choices: vec![OaiChoice {
+                message: OaiMessage {
+                    content: None,
+                    tool_calls: Some(vec![OaiToolCall {
+                        id: "call_1".into(),
+                        function: OaiFunction {
+                            name: String::new(),
+                            arguments: r#"{"command":"ls"}"#.into(),
+                        },
+                    }]),
+                },
+                finish_reason: Some("tool_calls".into()),
+            }],
+            usage: None,
+        };
+        let resp = translate_oai_response(oai);
+        assert_eq!(resp.stop_reason.as_deref(), Some("end_turn"));
+        match &resp.content[0] {
+            ResponseContentBlock::Text { text } => assert!(text.is_empty()),
+            _ => panic!("Expected Text"),
+        }
+    }
+
+    #[test]
     fn test_translate_oai_response_empty_choices() {
         let oai = OaiResponse {
             choices: vec![],
@@ -2007,6 +2054,31 @@ mod tests {
                 assert_eq!(input["cwd"], "/tmp");
             }
             _ => panic!("Expected ToolUse"),
+        }
+    }
+
+    #[test]
+    fn test_build_stream_response_drops_empty_tool_name() {
+        let mut tool_blocks = std::collections::HashMap::new();
+        tool_blocks.insert(
+            0,
+            StreamToolUseBlock {
+                id: "call_1".into(),
+                name: String::new(),
+                input_json: r#"{"command":"ls"}"#.into(),
+            },
+        );
+        let resp = build_stream_response(
+            vec![0],
+            std::collections::HashMap::new(),
+            tool_blocks,
+            Some("tool_use".into()),
+            None,
+        );
+        assert_eq!(resp.stop_reason.as_deref(), Some("end_turn"));
+        match &resp.content[0] {
+            ResponseContentBlock::Text { text } => assert!(text.is_empty()),
+            _ => panic!("Expected Text"),
         }
     }
 
