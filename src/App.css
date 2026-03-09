@@ -1993,6 +1993,12 @@ body {
   margin-bottom: 8px;
 }
 
+.skill-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .skill-detail-header h3 {
   font-size: 16px;
   font-weight: 600;

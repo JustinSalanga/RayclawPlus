@@ -237,6 +237,8 @@ fn infer_channel_from_chat_type(chat_type: &str) -> &'static str {
         "discord"
     } else if chat_type == "web" {
         "web"
+    } else if chat_type == "desktop" {
+        "desktop"
     } else {
         "unknown"
     }
@@ -257,6 +259,7 @@ fn ensure_chat_identity_schema(conn: &Connection) -> Result<(), RayClawError> {
              WHEN chat_type IN ('private', 'group', 'supergroup', 'channel') THEN 'telegram'
              WHEN chat_type = 'discord' THEN 'discord'
              WHEN chat_type = 'web' THEN 'web'
+             WHEN chat_type = 'desktop' THEN 'desktop'
              ELSE COALESCE(channel, 'unknown')
          END
          WHERE channel IS NULL OR trim(channel) = ''",

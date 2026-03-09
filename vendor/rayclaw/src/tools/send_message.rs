@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use tracing::{info, warn};
 
-use super::{authorize_chat_access, schema_object, Tool, ToolResult};
+use super::{auth_context_from_input, authorize_chat_access, schema_object, Tool, ToolResult};
 use crate::channel::{
     deliver_and_store_bot_message, enforce_channel_policy, get_required_chat_routing,
 };
@@ -48,6 +48,13 @@ impl SendMessageTool {
             .map_err(|e| format!("Failed to resolve external chat id: {e}"))?;
         Ok(external.unwrap_or_else(|| chat_id.to_string()))
     }
+
+    fn resolve_chat_id(input: &serde_json::Value) -> Option<i64> {
+        input
+            .get("chat_id")
+            .and_then(|v| v.as_i64())
+            .or_else(|| auth_context_from_input(input).map(|auth| auth.caller_chat_id))
+    }
 }
 
 #[async_trait]
@@ -64,7 +71,7 @@ impl Tool for SendMessageTool {
                 json!({
                     "chat_id": {
                         "type": "integer",
-                        "description": "The target chat ID"
+                        "description": "Optional target chat ID. Defaults to the current chat."
                     },
                     "text": {
                         "type": "string",
@@ -79,15 +86,19 @@ impl Tool for SendMessageTool {
                         "description": "Optional caption used when sending attachment"
                     }
                 }),
-                &["chat_id"],
+                &[],
             ),
         }
     }
 
     async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let chat_id = match input.get("chat_id").and_then(|v| v.as_i64()) {
+        let chat_id = match Self::resolve_chat_id(&input) {
             Some(id) => id,
-            None => return ToolResult::error("Missing required parameter: chat_id".into()),
+            None => {
+                return ToolResult::error(
+                    "Missing required parameter: chat_id and no current chat is available".into(),
+                )
+            }
         };
         let text = input
             .get("text")
@@ -375,6 +386,30 @@ mod tests {
             .await;
         assert!(result.is_error);
         assert!(result.content.contains("not supported for web"));
+        cleanup(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_send_message_defaults_to_auth_chat_id() {
+        let (db, dir) = test_db();
+        db.upsert_chat(999, Some("web-main"), "web").unwrap();
+
+        let tool = SendMessageTool::new(test_registry(), db.clone(), "bot".into());
+        let result = tool
+            .execute(json!({
+                "text": "implicit target",
+                "__rayclaw_auth": {
+                    "caller_channel": "web",
+                    "caller_chat_id": 999,
+                    "control_chat_ids": []
+                }
+            }))
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+
+        let all = db.get_all_messages(999).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].content, "implicit target");
         cleanup(&dir);
     }
 }

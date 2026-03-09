@@ -157,7 +157,7 @@ impl Tool for StructuredMemoryDeleteTool {
                 }
                 None => {
                     // Global memory — requires control chat
-                    if !auth.is_control_chat() {
+                    if !auth.can_manage_global_memory() {
                         return ToolResult::error(format!(
                             "Permission denied: only control chats can delete global memories (caller: {})",
                             auth.caller_chat_id
@@ -249,7 +249,7 @@ impl Tool for StructuredMemoryUpdateTool {
                     }
                 }
                 None => {
-                    if !auth.is_control_chat() {
+                    if !auth.can_manage_global_memory() {
                         return ToolResult::error(format!(
                             "Permission denied: only control chats can update global memories (caller: {})",
                             auth.caller_chat_id
@@ -356,6 +356,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_delete_global_memory_allowed_for_desktop_chat() {
+        let db = test_db();
+        let id = db.insert_memory(None, "desktop global", "KNOWLEDGE").unwrap();
+        let tool = StructuredMemoryDeleteTool::new(db.clone());
+        let result = tool
+            .execute(json!({
+                "id": id,
+                "__rayclaw_auth": {"caller_channel": "desktop", "caller_chat_id": 100, "control_chat_ids": []}
+            }))
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+        let mem = db.get_memory_by_id(id).unwrap().unwrap();
+        assert!(mem.is_archived);
+    }
+
+    #[tokio::test]
     async fn test_update_memory() {
         let db = test_db();
         let id = db
@@ -389,5 +405,22 @@ mod tests {
             .await;
         assert!(result.is_error);
         assert!(result.content.contains("300 character"));
+    }
+
+    #[tokio::test]
+    async fn test_update_global_memory_allowed_for_desktop_chat() {
+        let db = test_db();
+        let id = db.insert_memory(None, "old global", "KNOWLEDGE").unwrap();
+        let tool = StructuredMemoryUpdateTool::new(db.clone());
+        let result = tool
+            .execute(json!({
+                "id": id,
+                "content": "new global",
+                "__rayclaw_auth": {"caller_channel": "desktop", "caller_chat_id": 100, "control_chat_ids": []}
+            }))
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+        let mem = db.get_memory_by_id(id).unwrap().unwrap();
+        assert_eq!(mem.content, "new global");
     }
 }

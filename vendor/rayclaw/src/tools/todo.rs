@@ -6,7 +6,7 @@ use tracing::info;
 
 use crate::llm_types::ToolDefinition;
 
-use super::{authorize_chat_access, schema_object, Tool, ToolResult};
+use super::{auth_context_from_input, authorize_chat_access, schema_object, Tool, ToolResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
@@ -51,6 +51,13 @@ fn format_todos(todos: &[TodoItem]) -> String {
     out
 }
 
+fn resolve_chat_id(input: &serde_json::Value) -> Option<i64> {
+    input
+        .get("chat_id")
+        .and_then(|v| v.as_i64())
+        .or_else(|| auth_context_from_input(input).map(|auth| auth.caller_chat_id))
+}
+
 // --- TodoReadTool ---
 
 pub struct TodoReadTool {
@@ -79,18 +86,18 @@ impl Tool for TodoReadTool {
                 json!({
                     "chat_id": {
                         "type": "integer",
-                        "description": "The chat ID"
+                        "description": "Optional target chat ID. Defaults to the current chat."
                     }
                 }),
-                &["chat_id"],
+                &[],
             ),
         }
     }
 
     async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let chat_id = match input.get("chat_id").and_then(|v| v.as_i64()) {
+        let chat_id = match resolve_chat_id(&input) {
             Some(id) => id,
-            None => return ToolResult::error("Missing 'chat_id' parameter".into()),
+            None => return ToolResult::error("Missing 'chat_id' parameter and no current chat is available".into()),
         };
         if let Err(e) = authorize_chat_access(&input, chat_id) {
             return ToolResult::error(e);
@@ -130,7 +137,7 @@ impl Tool for TodoWriteTool {
                 json!({
                     "chat_id": {
                         "type": "integer",
-                        "description": "The chat ID"
+                        "description": "Optional target chat ID. Defaults to the current chat."
                     },
                     "todos": {
                         "type": "array",
@@ -152,15 +159,15 @@ impl Tool for TodoWriteTool {
                         }
                     }
                 }),
-                &["chat_id", "todos"],
+                &["todos"],
             ),
         }
     }
 
     async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let chat_id = match input.get("chat_id").and_then(|v| v.as_i64()) {
+        let chat_id = match resolve_chat_id(&input) {
             Some(id) => id,
-            None => return ToolResult::error("Missing 'chat_id' parameter".into()),
+            None => return ToolResult::error("Missing 'chat_id' parameter and no current chat is available".into()),
         };
         if let Err(e) = authorize_chat_access(&input, chat_id) {
             return ToolResult::error(e);
@@ -460,6 +467,58 @@ mod tests {
             .await;
         assert!(!result.is_error, "{}", result.content);
         assert!(result.content.contains("cross"));
+        cleanup(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_todo_read_defaults_to_auth_chat_id() {
+        let dir = test_dir();
+        let groups_dir = dir.join("groups");
+        write_todos(
+            &groups_dir,
+            321,
+            &[TodoItem {
+                task: "auth scoped".into(),
+                status: "pending".into(),
+            }],
+        )
+        .unwrap();
+        let tool = TodoReadTool::new(dir.to_str().unwrap());
+        let result = tool
+            .execute(json!({
+                "__rayclaw_auth": {
+                    "caller_channel": "desktop",
+                    "caller_chat_id": 321,
+                    "control_chat_ids": []
+                }
+            }))
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+        assert!(result.content.contains("auth scoped"));
+        cleanup(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_todo_write_defaults_to_auth_chat_id() {
+        let dir = test_dir();
+        let write_tool = TodoWriteTool::new(dir.to_str().unwrap());
+        let read_tool = TodoReadTool::new(dir.to_str().unwrap());
+
+        let result = write_tool
+            .execute(json!({
+                "todos": [{"task": "implicit chat", "status": "in_progress"}],
+                "__rayclaw_auth": {
+                    "caller_channel": "desktop",
+                    "caller_chat_id": 654,
+                    "control_chat_ids": []
+                }
+            }))
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+
+        let result = read_tool.execute(json!({"chat_id": 654})).await;
+        assert!(!result.is_error, "{}", result.content);
+        assert!(result.content.contains("implicit chat"));
         cleanup(&dir);
     }
 }

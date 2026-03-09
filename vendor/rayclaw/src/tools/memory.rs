@@ -152,7 +152,7 @@ impl Tool for WriteMemoryTool {
         let (path, memory_chat_id) = match scope {
             "global" => {
                 if let Some(auth) = auth_context_from_input(&input) {
-                    if !auth.is_control_chat() {
+                    if !auth.can_manage_global_memory() {
                         return ToolResult::error(format!(
                             "Permission denied: chat {} cannot write global memory",
                             auth.caller_chat_id
@@ -388,6 +388,28 @@ mod tests {
         assert!(!result.is_error, "{}", result.content);
         let content = std::fs::read_to_string(dir.join("groups").join("AGENTS.md")).unwrap();
         assert_eq!(content, "global ok");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_write_memory_global_allowed_for_desktop_chat() {
+        let dir = test_dir();
+        let db = test_db(&dir);
+        let tool = WriteMemoryTool::new(dir.to_str().unwrap(), db);
+        let result = tool
+            .execute(json!({
+                "scope": "global",
+                "content": "desktop global ok",
+                "__rayclaw_auth": {
+                    "caller_channel": "desktop",
+                    "caller_chat_id": 100,
+                    "control_chat_ids": []
+                }
+            }))
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+        let content = std::fs::read_to_string(dir.join("groups").join("AGENTS.md")).unwrap();
+        assert_eq!(content, "desktop global ok");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -163,6 +163,10 @@ impl ToolAuthContext {
         self.control_chat_ids.contains(&self.caller_chat_id)
     }
 
+    pub fn can_manage_global_memory(&self) -> bool {
+        self.is_control_chat() || self.caller_channel == "desktop"
+    }
+
     pub fn can_access_chat(&self, target_chat_id: i64) -> bool {
         self.is_control_chat() || self.caller_chat_id == target_chat_id
     }

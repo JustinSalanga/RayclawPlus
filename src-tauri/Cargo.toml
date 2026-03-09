@@ -29,6 +29,7 @@ teloxide = { version = "0.17", features = ["macros"] }
 tauri-plugin-dialog = "2.6.0"
 tauri-plugin-fs = "2.4.5"
 reqwest = { version = "0.12", features = ["json"] }
+async-trait = "0.1"
 
 [patch.crates-io]
 rayclaw = { path = "../vendor/rayclaw" }

@@ -250,7 +250,19 @@ pub struct Config {
 impl Config {
     /// Data root directory from config.
     pub fn data_root_dir(&self) -> PathBuf {
-        PathBuf::from(&self.data_dir)
+        let path = PathBuf::from(&self.data_dir);
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.eq_ignore_ascii_case("runtime"))
+            .unwrap_or(false)
+        {
+            path.parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or(path)
+        } else {
+            path
+        }
     }
 
     /// Runtime data directory (db, memory, exports, etc.).
@@ -766,16 +778,9 @@ mod tests {
         let runtime = std::path::PathBuf::from(config.runtime_data_dir());
         let skills = std::path::PathBuf::from(config.skills_data_dir());
 
-        assert!(runtime.ends_with(
-            std::path::Path::new("rayclaw.data")
-                .join("runtime")
-                .join("runtime")
-        ));
-        assert!(skills.ends_with(
-            std::path::Path::new("rayclaw.data")
-                .join("runtime")
-                .join("skills")
-        ));
+        assert!(config.data_root_dir().ends_with(std::path::Path::new("rayclaw.data")));
+        assert!(runtime.ends_with(std::path::Path::new("rayclaw.data").join("runtime")));
+        assert!(skills.ends_with(std::path::Path::new("rayclaw.data").join("skills")));
     }
 
     #[test]

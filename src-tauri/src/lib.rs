@@ -5,6 +5,9 @@ mod state;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use async_trait::async_trait;
+use rayclaw::channel::ConversationKind;
+use rayclaw::channel_adapter::ChannelAdapter;
 use rayclaw::channel_adapter::ChannelRegistry;
 use rayclaw::config::Config;
 use rayclaw::runtime::AppState;
@@ -153,6 +156,31 @@ fn configure_agent_browser_env(app: &tauri::AppHandle) {
     );
 }
 
+struct DesktopAdapter;
+
+#[async_trait]
+impl ChannelAdapter for DesktopAdapter {
+    fn name(&self) -> &str {
+        "desktop"
+    }
+
+    fn chat_type_routes(&self) -> Vec<(&str, ConversationKind)> {
+        vec![("desktop", ConversationKind::Private)]
+    }
+
+    fn is_local_only(&self) -> bool {
+        true
+    }
+
+    fn allows_cross_chat(&self) -> bool {
+        false
+    }
+
+    async fn send_text(&self, _external_chat_id: &str, _text: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Channel synthesis (mirrors post_deserialize for legacy flat fields)
 // ---------------------------------------------------------------------------
@@ -281,6 +309,9 @@ pub(crate) async fn init_agent(
 /// Register configured channel adapters into the registry.
 fn register_channels(config: &Config, registry: &mut ChannelRegistry) {
     use rayclaw::channels::*;
+
+    registry.register(Arc::new(DesktopAdapter));
+    info!("Registered channel: desktop");
 
     // Telegram
     if let Some(tg_cfg) =

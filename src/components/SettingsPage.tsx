@@ -375,6 +375,12 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
     }
   };
 
+  const handleBackToSkillList = () => {
+    setSelectedSkill(null);
+    setSkillEditing(false);
+    setSkillError(null);
+  };
+
   const handleSaveSoul = async () => {
     setSoulSaving(true);
     setSoulSaved(false);
@@ -769,7 +775,12 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
               {!skillEditing && selectedSkill && (
                 <div className="skill-detail">
                   <div className="skill-detail-header">
-                    <h3>{selectedSkill.meta.name}</h3>
+                    <div className="skill-detail-title">
+                      <button className="btn-back" style={{ fontSize: 12 }} onClick={handleBackToSkillList}>
+                        &larr; Back to list
+                      </button>
+                      <h3>{selectedSkill.meta.name}</h3>
+                    </div>
                     <div className="skill-detail-actions">
                       <button className="btn-back" style={{ fontSize: 12 }} onClick={handleEditSkill}>Edit</button>
                       <button className="btn-back" style={{ fontSize: 12, color: "var(--error)" }} onClick={() => handleDeleteSkill(selectedSkill.meta.name)}>Delete</button>
