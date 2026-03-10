@@ -173,6 +173,8 @@ Every message triggers an **agentic loop**: the model can call tools, inspect th
 ## Features
 
 - **Agentic tool use** -- bash commands, file read/write/edit, glob search, regex grep, persistent memory
+- **Browser automation** -- persistent `agent-browser` sessions with navigation, DOM interaction, cookies, storage, screenshots, and PDF export
+- **Desktop automation** -- desktop screenshots plus Windows window discovery, focus, click, typing, keypress, scroll, and text lookup tools
 - **Session resume** -- full conversation state (including tool interactions) persisted between messages; the agent keeps tool-call state across invocations
 - **Context compaction** -- when sessions grow too large, older messages are automatically summarized to stay within context limits
 - **Sub-agent** -- delegate self-contained sub-tasks to a parallel agent with restricted tools
@@ -192,6 +194,15 @@ Every message triggers an **agentic loop**: the model can call tools, inspect th
 | Tool | Description |
 |------|-------------|
 | `bash` | Execute shell commands with configurable timeout |
+| `browser` | Persistent browser automation via `agent-browser` with support for navigation, interaction, snapshots, cookies, storage, screenshots, PDF export, waits, tabs, and JS evaluation |
+| `capture_screenshot` | Capture the desktop to a PNG file and return screenshot metadata |
+| `list_windows` | List visible desktop windows with titles, handles, bounds, and foreground status |
+| `focus_window` | Bring a desktop window to the foreground by handle or title |
+| `click` | Click desktop coordinates using screen, window-relative, or screenshot-relative coordinates |
+| `type_text` | Type text into the currently focused desktop window |
+| `press_key` | Send key presses or key combinations to the focused desktop window |
+| `scroll` | Scroll the desktop mouse wheel, optionally at a target point |
+| `find_text` | Find visible text with Windows UI Automation and return clickable coordinates |
 | `read_file` | Read files with line numbers, optional offset/limit |
 | `write_file` | Create or overwrite files (auto-creates directories) |
 | `edit_file` | Find-and-replace editing with uniqueness validation |
@@ -199,6 +210,9 @@ Every message triggers an **agentic loop**: the model can call tools, inspect th
 | `grep` | Regex search across file contents |
 | `read_memory` | Read persistent AGENTS.md memory (global or per-chat) |
 | `write_memory` | Write persistent AGENTS.md memory |
+| `structured_memory_search` | Search structured SQLite memories by relevance |
+| `structured_memory_update` | Update an existing structured memory record |
+| `structured_memory_delete` | Delete a structured memory record |
 | `web_search` | Search the web via DuckDuckGo (returns titles, URLs, snippets) |
 | `web_fetch` | Fetch a URL and return plain text (HTML stripped, max 20KB) |
 | `send_message` | Send mid-conversation messages; supports attachments for Telegram/Discord via `attachment_path` + optional `caption` |
@@ -218,6 +232,11 @@ Every message triggers an **agentic loop**: the model can call tools, inspect th
 | `acp_prompt` | Send a coding task to an active ACP agent session and wait for completion |
 | `acp_end_session` | End an ACP agent session and terminate the agent subprocess |
 | `acp_list_sessions` | List all active ACP agent sessions with their status |
+
+Platform notes:
+- `browser` works cross-platform when `agent-browser` is installed or bundled.
+- `capture_screenshot` supports Windows, macOS, and Linux.
+- `list_windows`, `focus_window`, `click`, `type_text`, `press_key`, `scroll`, and `find_text` are currently Windows-only.
 
 Generated reference (source-of-truth, anti-drift):
 - `docs/generated/tools.md`
@@ -772,24 +791,31 @@ Bot: Port 5433.
 ```
 src/
     main.rs              # Entry point, CLI
-    config.rs            # Environment variable loading
+    config.rs            # YAML config loading, presets, defaults
     error.rs             # Error types (thiserror)
-    telegram.rs          # Telegram handler, agentic tool-use loop, session resume, context compaction, typing indicator
+    runtime.rs           # AppState assembly, channel startup, graceful shutdown
+    agent_engine.rs      # Shared agent loop, prompt assembly, session resume, compaction
     llm.rs               # LLM provider abstraction (Anthropic + OpenAI-compatible)
     llm_types.rs         # Canonical message/tool schema shared across LLM adapters
+    channels/            # Telegram, Discord, Slack, Feishu, delivery helpers
     db.rs                # SQLite: messages, chats, scheduled_tasks, sessions
     memory.rs            # AGENTS.md memory system
+    memory_quality.rs    # Explicit memory parsing, quality gates, dedup helpers
     skills.rs            # Agent skills system (discovery, activation)
-    scheduler.rs         # Background task scheduler (60s polling loop)
+    scheduler.rs         # Background task scheduler + memory reflector
     tools/
-        mod.rs           # Tool trait + registry (27+ tools)
+        mod.rs           # Tool trait + registry (39 built-ins + dynamic MCP/ACP tools)
         bash.rs          # Shell execution
+        browser.rs       # agent-browser wrapper
+        capture_screenshot.rs # Desktop screenshot capture
+        desktop.rs       # Windows desktop automation tools
         read_file.rs     # File reading
         write_file.rs    # File writing
         edit_file.rs     # Find/replace editing
         glob.rs          # File pattern matching
         grep.rs          # Regex content search
         memory.rs        # Memory read/write tools
+        structured_memory.rs # Structured memory search/update/delete
         web_search.rs    # DuckDuckGo web search
         web_fetch.rs     # URL fetching with HTML stripping
         send_message.rs  # Mid-conversation messaging (text + channel attachments)
@@ -799,6 +825,8 @@ src/
         todo.rs          # Plan & execute todo tools
         acp.rs           # 4 ACP tools (new_session/prompt/end_session/list_sessions)
     acp.rs               # ACP manager, connection layer, session lifecycle
+    doctor.rs            # Environment diagnostics
+    update.rs            # Self-update flow
 ```
 
 Key design decisions:

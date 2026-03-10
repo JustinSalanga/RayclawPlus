@@ -5,6 +5,7 @@ import { MessageSquarePlus, Settings, X, ChevronUp, ChevronDown, Paperclip, Spar
 import { sendMessage, getHistory, onAgentStream, renameChat, readSoul, saveSoul, type Attachment } from "../lib/tauri-api";
 import { inferChannel, channelLabel } from "../types";
 import type { StoredMessage, AgentStreamEvent } from "../types";
+import logoText from "../assets/logo-text.png";
 
 interface ToolStepData {
   name: string;
@@ -797,7 +798,7 @@ export default function ChatWindow({
       <main className="chat-window chat-window-empty">
         <div className="chat-header" />
         <div className="chat-empty-state">
-          <div className="empty-state-icon">VC</div>
+          <img src={logoText} alt="VirusClaw" className="setup-logo" />
           <h2>Welcome to VirusClaw</h2>
           <p>Select a chat or start a new conversation</p>
           <div className="empty-state-actions">
