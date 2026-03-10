@@ -58,6 +58,11 @@ export interface StoredMessage {
   content: string;
   is_from_bot: boolean;
   timestamp: string;
+  attachmentPreviews?: {
+    name: string;
+    type: string;
+    dataUrl: string;
+  }[];
 }
 
 export interface ChannelStatus {

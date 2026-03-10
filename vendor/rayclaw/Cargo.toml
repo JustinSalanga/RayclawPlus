@@ -213,5 +213,20 @@ version = "2"
 version = "1"
 features = ["v4"]
 
+[target.'cfg(windows)'.dependencies.enigo]
+version = "0.6"
+
+[target.'cfg(windows)'.dependencies.uiautomation]
+version = "0.24"
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62"
+features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+]
+
 [dev-dependencies.tower]
 version = "0.5"

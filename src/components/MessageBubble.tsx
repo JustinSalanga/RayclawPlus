@@ -108,6 +108,10 @@ function clampScrollOffset(value: number, viewportSize: number, contentSize: num
   return Math.min(Math.max(0, value), Math.max(0, contentSize - viewportSize));
 }
 
+function stripImagePlaceholder(content: string): string {
+  return content.replace(/^\[image\]\s*/i, "");
+}
+
 function extractMediaReferences(content: string): MediaReference[] {
   const seen = new Set<string>();
   const refs: MediaReference[] = [];
@@ -134,6 +138,23 @@ function extractMediaReferences(content: string): MediaReference[] {
   }
 
   return refs;
+}
+
+function extractAttachmentMediaReferences(message: StoredMessage): MediaReference[] {
+  const previews = message.attachmentPreviews ?? [];
+
+  return previews.reduce<MediaReference[]>((media, preview) => {
+    if (!preview.type.startsWith("image/")) {
+      return media;
+    }
+
+    media.push({
+      original: preview.name,
+      source: preview.dataUrl,
+      kind: "image",
+    });
+    return media;
+  }, []);
 }
 
 function InlineMedia({
@@ -288,7 +309,16 @@ function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry }: Mess
   const imagePreviewDragRef = useRef<{ startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
   const imagePreviewZoomAnimationRef = useRef<number | null>(null);
   const imagePreviewZoomAnchorRef = useRef<ZoomAnchor | null>(null);
-  const mediaReferences = useMemo(() => extractMediaReferences(message.content), [message.content]);
+  const inlineMediaReferences = useMemo(() => extractMediaReferences(message.content), [message.content]);
+  const attachmentMediaReferences = useMemo(() => extractAttachmentMediaReferences(message), [message]);
+  const mediaReferences = useMemo(
+    () => [...attachmentMediaReferences, ...inlineMediaReferences],
+    [attachmentMediaReferences, inlineMediaReferences],
+  );
+  const userDisplayText = useMemo(
+    () => (message.attachmentPreviews?.length ? stripImagePlaceholder(message.content) : message.content),
+    [message.attachmentPreviews, message.content],
+  );
   const imagePreviewMetrics = useMemo<ImagePreviewMetrics | null>(() => {
     if (!imagePreviewNaturalSize || imagePreviewViewportSize.width <= 0 || imagePreviewViewportSize.height <= 0) {
       return null;
@@ -619,9 +649,9 @@ function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry }: Mess
           )}
           {isBot ? (
             <BotMessageMarkdown content={message.content} onImagePreview={handleOpenImagePreview} />
-          ) : (
-            <p>{message.content}</p>
-          )}
+          ) : userDisplayText ? (
+            <p>{userDisplayText}</p>
+          ) : null}
         </div>
         {isLong && (
           <button className="btn-collapse-toggle" onClick={() => setCollapsed(!collapsed)}>

@@ -27,6 +27,7 @@ interface QueuedMessage {
   userText: string;
   displayText: string;
   attachmentDtos?: Attachment[];
+  attachmentPreviews?: StoredMessage["attachmentPreviews"];
   optimisticMessage: StoredMessage;
 }
 
@@ -62,6 +63,39 @@ function createDefaultChatRuntimeState(): ChatRuntimeState {
     sendError: null,
     queuedMessages: [],
   };
+}
+
+function mergeMessagesWithAttachmentPreviews(
+  incoming: StoredMessage[],
+  existing: StoredMessage[],
+): StoredMessage[] {
+  const previewsByContent = new Map<string, StoredMessage[]>();
+
+  for (const message of existing) {
+    if (message.is_from_bot || !message.attachmentPreviews?.length) {
+      continue;
+    }
+
+    const bucket = previewsByContent.get(message.content) ?? [];
+    bucket.push(message);
+    previewsByContent.set(message.content, bucket);
+  }
+
+  return incoming.map((message) => {
+    if (message.is_from_bot || message.attachmentPreviews?.length) {
+      return message;
+    }
+
+    const matched = previewsByContent.get(message.content)?.shift();
+    if (!matched?.attachmentPreviews?.length) {
+      return message;
+    }
+
+    return {
+      ...message,
+      attachmentPreviews: matched.attachmentPreviews,
+    };
+  });
 }
 
 export default function ChatWindow({
@@ -273,7 +307,7 @@ export default function ChatWindow({
       return;
     }
     getHistory(chatId).then((msgs) => {
-      setMessages(msgs);
+      setMessages((prev) => mergeMessagesWithAttachmentPreviews(msgs, prev));
       setTimeout(scrollToBottom, 50);
     }).catch(() => {
       setMessages([]);
@@ -381,7 +415,7 @@ export default function ChatWindow({
           setTimeout(() => {
             getHistory(eventChatId).then((msgs) => {
               if (eventChatId === chatIdRef.current) {
-                setMessages(msgs);
+                setMessages((prev) => mergeMessagesWithAttachmentPreviews(msgs, prev));
                 setTimeout(scrollToBottom, 50);
               }
 
@@ -477,7 +511,11 @@ export default function ChatWindow({
     if (modalTextareaRef.current) modalTextareaRef.current.style.height = "auto";
   }, []);
 
-  const createOptimisticUserMessage = useCallback((chatIdValue: number, content: string): StoredMessage => {
+  const createOptimisticUserMessage = useCallback((
+    chatIdValue: number,
+    content: string,
+    attachmentPreviews?: StoredMessage["attachmentPreviews"],
+  ): StoredMessage => {
     return {
       id: crypto.randomUUID(),
       chat_id: chatIdValue,
@@ -485,6 +523,7 @@ export default function ChatWindow({
       content,
       is_from_bot: false,
       timestamp: new Date().toISOString(),
+      attachmentPreviews,
     };
   }, []);
 
@@ -579,6 +618,11 @@ export default function ChatWindow({
         const base64 = a.dataUrl.split(",")[1] || "";
         return { data: base64, media_type: a.type, name: a.name };
       });
+    const attachmentPreviews = currentAttachments.map(({ name, type, dataUrl }) => ({
+      name,
+      type,
+      dataUrl,
+    }));
     const displayText = attachmentDtos.length > 0 && userText
       ? `[image] ${userText}`
       : attachmentDtos.length > 0
@@ -588,8 +632,9 @@ export default function ChatWindow({
     const outgoing: QueuedMessage = {
       userText,
       attachmentDtos,
+      attachmentPreviews,
       displayText,
-      optimisticMessage: createOptimisticUserMessage(chatId, displayText),
+      optimisticMessage: createOptimisticUserMessage(chatId, displayText, attachmentPreviews),
     };
 
     if (isStreaming) {

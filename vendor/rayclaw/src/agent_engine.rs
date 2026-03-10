@@ -1220,7 +1220,7 @@ You are called {bot_username}. You are connected via {caller_channel}."#
 
 You have the following tool categories at your disposal:
 - **Shell**: execute bash commands (bash)
-- **Desktop**: capture_screenshot — capture the current desktop as a PNG file and return coordinate metadata
+- **Desktop**: capture_screenshot — capture the current desktop or a selected monitor as a PNG file and return coordinate metadata
 - **Desktop automation**: list_windows, focus_window, find_text, click, type_text, press_key, scroll — inspect open app windows, find UI labels, focus a target window, and send mouse/keyboard input on the desktop
 - **Files**: read_file, write_file, edit_file, glob (pattern search), grep (content search)
 - **Memory**: read_memory / write_memory (file-based), structured_read_memory / structured_write_memory (SQLite-backed)

@@ -47,6 +47,32 @@ impl CaptureScreenshotTool {
         }
     }
 
+    fn parse_screen_id(input: &serde_json::Value) -> Result<Option<u32>, String> {
+        let Some(value) = input.get("screen_id") else {
+            return Ok(None);
+        };
+
+        if let Some(id) = value.as_u64() {
+            return u32::try_from(id)
+                .map(Some)
+                .map_err(|_| "screen_id is too large".to_string());
+        }
+
+        if let Some(text) = value.as_str() {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+
+            let id = trimmed
+                .parse::<u32>()
+                .map_err(|_| "screen_id must be a non-negative integer".to_string())?;
+            return Ok(Some(id));
+        }
+
+        Err("screen_id must be a non-negative integer".to_string())
+    }
+
     #[cfg(target_os = "linux")]
     fn command_exists(command: &str) -> bool {
         if command.trim().is_empty() {
@@ -88,8 +114,11 @@ impl CaptureScreenshotTool {
     }
 
     #[cfg(target_os = "windows")]
-    fn build_capture_command(path: &Path) -> tokio::process::Command {
+    fn build_capture_command(path: &Path, screen_id: Option<u32>) -> tokio::process::Command {
         let escaped_path = path.to_string_lossy().replace('\'', "''");
+        let screen_id_line = screen_id
+            .map(|id| format!("$screenId = {id}"))
+            .unwrap_or_else(|| "$screenId = $null".to_string());
         let script = format!(
             r#"
 Add-Type -AssemblyName System.Windows.Forms
@@ -102,7 +131,20 @@ public static class RayclawScreenshotNative {{
 }}
 "@
 [void][RayclawScreenshotNative]::SetProcessDPIAware()
-$bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+{screen_id_line}
+$screens = [System.Windows.Forms.Screen]::AllScreens
+if ($screenId -ne $null) {{
+  if ($screenId -lt 0 -or $screenId -ge $screens.Length) {{
+    Write-Error "Invalid screen_id $screenId. Available screen ids: 0..$($screens.Length - 1)"
+    exit 2
+  }}
+  $screen = $screens[$screenId]
+  $bounds = $screen.Bounds
+  $deviceName = $screen.DeviceName
+}} else {{
+  $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+  $deviceName = $null
+}}
 $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bitmap.Size)
@@ -111,13 +153,18 @@ $graphics.Dispose()
 $bitmap.Dispose()
 [pscustomobject]@{{
   path = '{escaped_path}'
+  screen_id = $screenId
+  device_name = $deviceName
   origin_x = $bounds.Left
   origin_y = $bounds.Top
   width = $bounds.Width
   height = $bounds.Height
   scale = 1.0
+  capture_scope = $(if ($screenId -ne $null) {{ 'screen' }} else {{ 'virtual_desktop' }})
+  screen_count = $screens.Length
 }} | ConvertTo-Json -Compress
-"#
+"#,
+            screen_id_line = screen_id_line
         );
 
         let mut cmd = tokio::process::Command::new("powershell");
@@ -130,14 +177,17 @@ $bitmap.Dispose()
     }
 
     #[cfg(target_os = "macos")]
-    fn build_capture_command(path: &Path) -> tokio::process::Command {
+    fn build_capture_command(path: &Path, _screen_id: Option<u32>) -> tokio::process::Command {
         let mut cmd = tokio::process::Command::new("screencapture");
         cmd.arg("-x").arg(path);
         cmd
     }
 
     #[cfg(target_os = "linux")]
-    fn build_capture_command(path: &Path) -> Result<tokio::process::Command, String> {
+    fn build_capture_command(
+        path: &Path,
+        _screen_id: Option<u32>,
+    ) -> Result<tokio::process::Command, String> {
         if Self::command_exists("grim") {
             let mut cmd = tokio::process::Command::new("grim");
             cmd.arg(path);
@@ -196,6 +246,10 @@ impl Tool for CaptureScreenshotTool {
                         "type": "string",
                         "description": "Optional output PNG path. Absolute paths are used as-is; relative paths are saved inside the chat screenshot directory."
                     },
+                    "screen_id": {
+                        "type": ["integer", "string"],
+                        "description": "Optional monitor index to capture on Windows. Uses Screen.AllScreens order with zero-based ids. If omitted, captures the full virtual desktop."
+                    },
                     "timeout_secs": {
                         "type": "integer",
                         "description": "Timeout in seconds (default: 30)"
@@ -211,6 +265,10 @@ impl Tool for CaptureScreenshotTool {
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(30);
+        let screen_id = match Self::parse_screen_id(&input) {
+            Ok(value) => value,
+            Err(err) => return ToolResult::error(err),
+        };
         let output_path = self.resolve_output_path(&input);
         let output_path_str = output_path.to_string_lossy().to_string();
 
@@ -238,14 +296,19 @@ impl Tool for CaptureScreenshotTool {
 
         info!("Capturing desktop screenshot to {}", output_path.display());
 
+        #[cfg(not(target_os = "windows"))]
+        if screen_id.is_some() {
+            return ToolResult::error("screen_id is currently supported on Windows only".into());
+        }
+
         #[cfg(target_os = "linux")]
-        let mut command = match Self::build_capture_command(&output_path) {
+        let mut command = match Self::build_capture_command(&output_path, screen_id) {
             Ok(cmd) => cmd,
             Err(err) => return ToolResult::error(err).with_error_type("missing_dependency"),
         };
 
         #[cfg(not(target_os = "linux"))]
-        let mut command = Self::build_capture_command(&output_path);
+        let mut command = Self::build_capture_command(&output_path, screen_id);
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
             command.kill_on_drop(true).output().await
@@ -333,6 +396,7 @@ mod tests {
         assert_eq!(def.name, "capture_screenshot");
         assert!(def.description.contains("desktop"));
         assert!(def.input_schema["properties"]["path"].is_object());
+        assert!(def.input_schema["properties"]["screen_id"].is_object());
         assert!(def.input_schema["properties"]["timeout_secs"].is_object());
     }
 
@@ -342,5 +406,27 @@ mod tests {
         let path = tool.resolve_output_path(&json!({}));
         assert_eq!(path.extension().and_then(|ext| ext.to_str()), Some("png"));
         assert!(path.to_string_lossy().contains("desktop_screenshot_"));
+    }
+
+    #[test]
+    fn test_parse_screen_id_accepts_integer_and_string() {
+        assert_eq!(
+            CaptureScreenshotTool::parse_screen_id(&json!({ "screen_id": 1 })).unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            CaptureScreenshotTool::parse_screen_id(&json!({ "screen_id": "2" })).unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            CaptureScreenshotTool::parse_screen_id(&json!({ "screen_id": "   " })).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_parse_screen_id_rejects_invalid_values() {
+        assert!(CaptureScreenshotTool::parse_screen_id(&json!({ "screen_id": -1 })).is_err());
+        assert!(CaptureScreenshotTool::parse_screen_id(&json!({ "screen_id": "abc" })).is_err());
     }
 }

@@ -1,6 +1,8 @@
+use std::time::Duration;
+
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use serde_json::json;
-use tokio::process::Command;
 
 use crate::llm_types::ToolDefinition;
 use crate::text::floor_char_boundary;
@@ -8,6 +10,9 @@ use crate::text::floor_char_boundary;
 use super::{schema_object, Tool, ToolResult};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
+const FIND_TEXT_MATCH_MODE: &str = "contains_ignore_case";
+const FIND_TEXT_VISION_FALLBACK: &str =
+    "No matching text was found via UI Automation. Capture a screenshot and use vision to locate the target visually.";
 
 pub struct ClickTool;
 pub struct TypeTextTool;
@@ -16,6 +21,86 @@ pub struct ScrollTool;
 pub struct FindTextTool;
 pub struct ListWindowsTool;
 pub struct FocusWindowTool;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MouseButtonKind {
+    Left,
+    Right,
+    Middle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeyModifier {
+    Control,
+    Alt,
+    Shift,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NamedKey {
+    Return,
+    Tab,
+    Escape,
+    Space,
+    Backspace,
+    Delete,
+    Insert,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Up,
+    Down,
+    Left,
+    Right,
+    F(u8),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeyInput {
+    Named(NamedKey),
+    Character(char),
+}
+
+#[derive(Clone, Debug)]
+struct ClickRequest {
+    x: Option<f64>,
+    y: Option<f64>,
+    window_x: Option<f64>,
+    window_y: Option<f64>,
+    window_id: Option<String>,
+    screenshot_x: Option<f64>,
+    screenshot_y: Option<f64>,
+    screenshot_origin_x: Option<f64>,
+    screenshot_origin_y: Option<f64>,
+    screenshot_scale: Option<f64>,
+    screenshot_window_id: Option<String>,
+    button: MouseButtonKind,
+    button_name: String,
+    click_count: u64,
+}
+
+#[derive(Clone, Debug)]
+struct ScrollRequest {
+    delta: i64,
+    x: Option<i64>,
+    y: Option<i64>,
+}
+
+#[derive(Clone, Debug)]
+struct FindTextRequest {
+    text: String,
+    window_id: Option<String>,
+    app_name: String,
+    max_results: usize,
+}
+
+#[derive(Clone, Debug)]
+struct FocusWindowRequest {
+    hwnd: Option<String>,
+    title: Option<String>,
+    title_contains: Option<String>,
+}
 
 fn truncate_output(text: &str, limit: usize) -> String {
     if text.len() <= limit {
@@ -26,10 +111,6 @@ fn truncate_output(text: &str, limit: usize) -> String {
     let mut truncated = text[..cutoff].to_string();
     truncated.push_str("\n... (output truncated)");
     truncated
-}
-
-fn ps_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn parse_timeout_secs(input: &serde_json::Value) -> u64 {
@@ -66,65 +147,141 @@ fn parse_stringish(input: &serde_json::Value, key: &str) -> Option<String> {
     }
 }
 
-fn ps_number_or_null(value: Option<f64>) -> String {
-    value
-        .map(|v| {
-            if v.fract() == 0.0 {
-                format!("{v:.0}")
-            } else {
-                v.to_string()
-            }
-        })
-        .unwrap_or_else(|| "$null".to_string())
+fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
+    haystack
+        .to_ascii_lowercase()
+        .contains(&needle.to_ascii_lowercase())
 }
 
-#[cfg(target_os = "windows")]
-async fn run_powershell(script: String, timeout_secs: u64) -> ToolResult {
-    let mut command = Command::new("powershell");
-    command
-        .arg("-NoProfile")
-        .arg("-NonInteractive")
-        .arg("-STA")
-        .arg("-Command")
-        .arg(script);
+fn build_find_text_response<T: serde::Serialize>(
+    query: &str,
+    matches: &[T],
+    available_elements: &[String],
+) -> String {
+    let mut response = json!({
+        "query": query,
+        "match_type": FIND_TEXT_MATCH_MODE,
+        "matches": matches,
+    });
 
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(timeout_secs),
-        command.kill_on_drop(true).output(),
-    )
-    .await;
-
-    match result {
-        Ok(Ok(output)) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let exit_code = output.status.code().unwrap_or(-1);
-
-            let mut text = String::new();
-            if !stdout.trim().is_empty() {
-                text.push_str(stdout.trim());
-            }
-            if !stderr.trim().is_empty() {
-                if !text.is_empty() {
-                    text.push('\n');
-                }
-                text.push_str("STDERR:\n");
-                text.push_str(stderr.trim());
-            }
-            if text.is_empty() {
-                text = format!("Command completed with exit code {exit_code}");
-            }
-
-            let text = truncate_output(&text, 12000);
-            if exit_code == 0 {
-                ToolResult::success(text).with_status_code(exit_code)
-            } else {
-                ToolResult::error(text)
-                    .with_status_code(exit_code)
-                    .with_error_type("desktop_automation_failed")
-            }
+    if matches.is_empty() {
+        if let Some(obj) = response.as_object_mut() {
+            obj.insert("available_elements".to_string(), json!(available_elements));
+            obj.insert(
+                "fallback_strategy".to_string(),
+                json!("capture_screenshot_with_vision"),
+            );
+            obj.insert(
+                "fallback_message".to_string(),
+                json!(FIND_TEXT_VISION_FALLBACK),
+            );
         }
-        Ok(Err(err)) => ToolResult::error(format!("Failed to launch PowerShell: {err}"))
+    }
+
+    response.to_string()
+}
+
+fn parse_button_kind(button: &str) -> Result<MouseButtonKind, String> {
+    match button.trim().to_ascii_lowercase().as_str() {
+        "left" => Ok(MouseButtonKind::Left),
+        "right" => Ok(MouseButtonKind::Right),
+        "middle" | "center" => Ok(MouseButtonKind::Middle),
+        other => Err(format!(
+            "Unsupported button '{other}'. Use left, right, center, or middle."
+        )),
+    }
+}
+
+fn parse_key_input(key: &str) -> Result<KeyInput, String> {
+    let normalized = key.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Err("Missing 'key' parameter".into());
+    }
+
+    let named = match normalized.as_str() {
+        "enter" | "return" => Some(NamedKey::Return),
+        "tab" => Some(NamedKey::Tab),
+        "esc" | "escape" => Some(NamedKey::Escape),
+        "space" => Some(NamedKey::Space),
+        "backspace" => Some(NamedKey::Backspace),
+        "delete" | "del" => Some(NamedKey::Delete),
+        "insert" | "ins" => Some(NamedKey::Insert),
+        "home" => Some(NamedKey::Home),
+        "end" => Some(NamedKey::End),
+        "pageup" | "page_up" => Some(NamedKey::PageUp),
+        "pagedown" | "page_down" => Some(NamedKey::PageDown),
+        "up" | "arrowup" => Some(NamedKey::Up),
+        "down" | "arrowdown" => Some(NamedKey::Down),
+        "left" | "arrowleft" => Some(NamedKey::Left),
+        "right" | "arrowright" => Some(NamedKey::Right),
+        "f1" => Some(NamedKey::F(1)),
+        "f2" => Some(NamedKey::F(2)),
+        "f3" => Some(NamedKey::F(3)),
+        "f4" => Some(NamedKey::F(4)),
+        "f5" => Some(NamedKey::F(5)),
+        "f6" => Some(NamedKey::F(6)),
+        "f7" => Some(NamedKey::F(7)),
+        "f8" => Some(NamedKey::F(8)),
+        "f9" => Some(NamedKey::F(9)),
+        "f10" => Some(NamedKey::F(10)),
+        "f11" => Some(NamedKey::F(11)),
+        "f12" => Some(NamedKey::F(12)),
+        _ => None,
+    };
+
+    if let Some(named) = named {
+        return Ok(KeyInput::Named(named));
+    }
+
+    let mut chars = key.chars();
+    let ch = chars
+        .next()
+        .ok_or_else(|| "Missing 'key' parameter".to_string())?;
+    if chars.next().is_none() {
+        Ok(KeyInput::Character(ch))
+    } else {
+        Err(format!("Unsupported key '{key}'"))
+    }
+}
+
+fn parse_modifiers(raw: &[String]) -> Result<Vec<KeyModifier>, String> {
+    raw.iter()
+        .map(
+            |modifier| match modifier.trim().to_ascii_lowercase().as_str() {
+                "ctrl" | "control" => Ok(KeyModifier::Control),
+                "alt" => Ok(KeyModifier::Alt),
+                "shift" => Ok(KeyModifier::Shift),
+                "win" | "meta" | "super" => {
+                    Err("The Windows/meta modifier is not supported by press_key".into())
+                }
+                other => Err(format!("Unsupported modifier '{other}'")),
+            },
+        )
+        .collect()
+}
+
+async fn run_desktop_operation<F>(timeout_secs: u64, operation: F) -> ToolResult
+where
+    F: FnOnce() -> Result<String> + Send + 'static,
+{
+    if !cfg!(target_os = "windows") {
+        return ToolResult::error(
+            "Desktop automation tools are currently supported on Windows only.".into(),
+        )
+        .with_error_type("unsupported_platform");
+    }
+
+    match tokio::time::timeout(
+        Duration::from_secs(timeout_secs),
+        tokio::task::spawn_blocking(operation),
+    )
+    .await
+    {
+        Ok(Ok(Ok(output))) => ToolResult::success(truncate_output(&output, 12000)),
+        Ok(Ok(Err(err))) => {
+            ToolResult::error(err.to_string()).with_error_type("desktop_automation_failed")
+        }
+        Ok(Err(err)) => ToolResult::error(format!("Desktop automation task failed: {err}"))
             .with_error_type("desktop_automation_failed"),
         Err(_) => ToolResult::error(format!(
             "Desktop automation command timed out after {timeout_secs} seconds"
@@ -133,154 +290,713 @@ async fn run_powershell(script: String, timeout_secs: u64) -> ToolResult {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-async fn run_powershell(_script: String, _timeout_secs: u64) -> ToolResult {
-    ToolResult::error("Desktop automation tools are currently supported on Windows only.".into())
-        .with_error_type("unsupported_platform")
-}
+#[cfg(target_os = "windows")]
+mod platform {
+    use std::collections::HashSet;
+    use std::path::Path;
+    use std::sync::Once;
+    use std::thread;
+    use std::time::Duration;
 
-fn send_keys_token(key: &str) -> Result<String, String> {
-    let normalized = key.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        return Err("Missing 'key' parameter".into());
-    }
-
-    let token = match normalized.as_str() {
-        "enter" | "return" => "{ENTER}".to_string(),
-        "tab" => "{TAB}".to_string(),
-        "esc" | "escape" => "{ESC}".to_string(),
-        "space" => " ".to_string(),
-        "backspace" => "{BACKSPACE}".to_string(),
-        "delete" | "del" => "{DELETE}".to_string(),
-        "insert" | "ins" => "{INSERT}".to_string(),
-        "home" => "{HOME}".to_string(),
-        "end" => "{END}".to_string(),
-        "pageup" | "page_up" => "{PGUP}".to_string(),
-        "pagedown" | "page_down" => "{PGDN}".to_string(),
-        "up" | "arrowup" => "{UP}".to_string(),
-        "down" | "arrowdown" => "{DOWN}".to_string(),
-        "left" | "arrowleft" => "{LEFT}".to_string(),
-        "right" | "arrowright" => "{RIGHT}".to_string(),
-        "f1" => "{F1}".to_string(),
-        "f2" => "{F2}".to_string(),
-        "f3" => "{F3}".to_string(),
-        "f4" => "{F4}".to_string(),
-        "f5" => "{F5}".to_string(),
-        "f6" => "{F6}".to_string(),
-        "f7" => "{F7}".to_string(),
-        "f8" => "{F8}".to_string(),
-        "f9" => "{F9}".to_string(),
-        "f10" => "{F10}".to_string(),
-        "f11" => "{F11}".to_string(),
-        "f12" => "{F12}".to_string(),
-        _ => {
-            if key.chars().count() == 1 {
-                encode_send_keys_text(key)
-            } else {
-                return Err(format!("Unsupported key '{key}'"));
-            }
-        }
+    use enigo::{Axis, Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
+    use serde::Serialize;
+    use uiautomation::core::UIAutomation;
+    use uiautomation::types::Handle;
+    use uiautomation::{UIElement, UITreeWalker};
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HWND};
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_RESTORE,
     };
 
-    Ok(token)
-}
+    use super::{
+        anyhow, build_find_text_response, contains_ignore_case, json, ClickRequest, Context,
+        FindTextRequest, FocusWindowRequest, KeyInput, KeyModifier, MouseButtonKind, NamedKey,
+        Result, ScrollRequest,
+    };
 
-fn encode_send_keys_text(text: &str) -> String {
-    let mut encoded = String::new();
-    for ch in text.chars() {
-        match ch {
-            '\r' => {}
-            '\n' => encoded.push_str("{ENTER}"),
-            '\t' => encoded.push_str("{TAB}"),
-            '+' => encoded.push_str("{+}"),
-            '^' => encoded.push_str("{^}"),
-            '%' => encoded.push_str("{%}"),
-            '~' => encoded.push_str("{~}"),
-            '(' => encoded.push_str("{(}"),
-            ')' => encoded.push_str("{)}"),
-            '{' => encoded.push_str("{{}"),
-            '}' => encoded.push_str("{}}"),
-            '[' => encoded.push_str("{[}"),
-            ']' => encoded.push_str("{]}"),
-            _ => encoded.push(ch),
+    static DPI_AWARE: Once = Once::new();
+
+    #[derive(Clone, Serialize)]
+    struct Bounds {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+        width: i32,
+        height: i32,
+    }
+
+    #[derive(Serialize)]
+    struct WindowInfo {
+        hwnd: String,
+        title: String,
+        process_id: u32,
+        process_name: Option<String>,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        bounds: Bounds,
+        is_visible: bool,
+        is_foreground: bool,
+    }
+
+    #[derive(Serialize)]
+    struct TextMatch {
+        name: String,
+        process_id: u32,
+        process_name: Option<String>,
+        control_type: String,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        center_x: i32,
+        center_y: i32,
+    }
+
+    fn ensure_dpi_awareness() {
+        DPI_AWARE.call_once(|| {});
+    }
+
+    fn automation() -> Result<UIAutomation> {
+        ensure_dpi_awareness();
+        UIAutomation::new().map_err(|err| anyhow!(err.to_string()))
+    }
+
+    fn format_hwnd(hwnd: isize) -> String {
+        format!("0x{hwnd:X}")
+    }
+
+    fn parse_window_handle(raw: &str) -> Result<isize> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(anyhow!("Window handle is required"));
+        }
+
+        if let Some(hex) = trimmed
+            .strip_prefix("0x")
+            .or_else(|| trimmed.strip_prefix("0X"))
+        {
+            i64::from_str_radix(hex, 16)
+                .map(|value| value as isize)
+                .with_context(|| format!("Invalid window handle '{raw}'"))
+        } else {
+            trimmed
+                .parse::<i64>()
+                .map(|value| value as isize)
+                .with_context(|| format!("Invalid window handle '{raw}'"))
         }
     }
-    encoded
-}
 
-fn send_keys_with_modifiers(key: &str, modifiers: &[String]) -> Result<String, String> {
-    let mut encoded = String::new();
-    for modifier in modifiers {
-        match modifier.trim().to_ascii_lowercase().as_str() {
-            "ctrl" | "control" => encoded.push('^'),
-            "alt" => encoded.push('%'),
-            "shift" => encoded.push('+'),
-            "win" | "meta" | "super" => {
-                return Err("The Windows/meta modifier is not supported by press_key".into())
+    fn hwnd_as_handle(hwnd: isize) -> Handle {
+        Handle::from(hwnd_from_isize(hwnd))
+    }
+
+    fn hwnd_from_isize(hwnd: isize) -> HWND {
+        HWND(std::ptr::with_exposed_provenance_mut(hwnd as usize))
+    }
+
+    fn hwnd_to_isize(hwnd: HWND) -> isize {
+        hwnd.0 as isize
+    }
+
+    fn child_elements(walker: &UITreeWalker, parent: &UIElement) -> Vec<UIElement> {
+        let mut elements = Vec::new();
+        if let Ok(first) = walker.get_first_child(parent) {
+            elements.push(first);
+            while let Some(current) = elements.last() {
+                match walker.get_next_sibling(current) {
+                    Ok(sibling) => elements.push(sibling),
+                    Err(_) => break,
+                }
             }
-            other => return Err(format!("Unsupported modifier '{other}'")),
+        }
+        elements
+    }
+
+    fn is_window_visible(hwnd: isize) -> bool {
+        unsafe { IsWindowVisible(hwnd_from_isize(hwnd)).as_bool() }
+    }
+
+    fn to_bounds(rect: &uiautomation::types::Rect) -> Bounds {
+        let left = rect.get_left();
+        let top = rect.get_top();
+        let width = rect.get_width().max(0);
+        let height = rect.get_height().max(0);
+        Bounds {
+            left,
+            top,
+            right: left + width,
+            bottom: top + height,
+            width,
+            height,
         }
     }
-    encoded.push_str(&send_keys_token(key)?);
-    Ok(encoded)
-}
 
-fn user32_script() -> &'static str {
-    r#"
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
+    fn round_to_i32(value: f64, name: &str) -> Result<i32> {
+        if !value.is_finite() {
+            return Err(anyhow!("{name} must be a finite number"));
+        }
 
-public static class DesktopAutomationNative {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct RECT {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
+        let rounded = value.round();
+        if rounded < i32::MIN as f64 || rounded > i32::MAX as f64 {
+            return Err(anyhow!("{name} is out of range"));
+        }
+        Ok(rounded as i32)
     }
 
-    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    fn create_enigo() -> Result<Enigo> {
+        Enigo::new(&Settings::default()).map_err(|err| anyhow!(err.to_string()))
+    }
 
-    [DllImport("user32.dll")]
-    public static extern bool SetProcessDPIAware();
+    fn to_enigo_button(button: MouseButtonKind) -> Button {
+        match button {
+            MouseButtonKind::Left => Button::Left,
+            MouseButtonKind::Right => Button::Right,
+            MouseButtonKind::Middle => Button::Middle,
+        }
+    }
 
-    [DllImport("user32.dll")]
-    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    fn to_enigo_key(input: KeyInput) -> Key {
+        match input {
+            KeyInput::Character(ch) => Key::Unicode(ch),
+            KeyInput::Named(NamedKey::Return) => Key::Return,
+            KeyInput::Named(NamedKey::Tab) => Key::Tab,
+            KeyInput::Named(NamedKey::Escape) => Key::Escape,
+            KeyInput::Named(NamedKey::Space) => Key::Space,
+            KeyInput::Named(NamedKey::Backspace) => Key::Backspace,
+            KeyInput::Named(NamedKey::Delete) => Key::Delete,
+            KeyInput::Named(NamedKey::Insert) => Key::Insert,
+            KeyInput::Named(NamedKey::Home) => Key::Home,
+            KeyInput::Named(NamedKey::End) => Key::End,
+            KeyInput::Named(NamedKey::PageUp) => Key::PageUp,
+            KeyInput::Named(NamedKey::PageDown) => Key::PageDown,
+            KeyInput::Named(NamedKey::Up) => Key::UpArrow,
+            KeyInput::Named(NamedKey::Down) => Key::DownArrow,
+            KeyInput::Named(NamedKey::Left) => Key::LeftArrow,
+            KeyInput::Named(NamedKey::Right) => Key::RightArrow,
+            KeyInput::Named(NamedKey::F(1)) => Key::F1,
+            KeyInput::Named(NamedKey::F(2)) => Key::F2,
+            KeyInput::Named(NamedKey::F(3)) => Key::F3,
+            KeyInput::Named(NamedKey::F(4)) => Key::F4,
+            KeyInput::Named(NamedKey::F(5)) => Key::F5,
+            KeyInput::Named(NamedKey::F(6)) => Key::F6,
+            KeyInput::Named(NamedKey::F(7)) => Key::F7,
+            KeyInput::Named(NamedKey::F(8)) => Key::F8,
+            KeyInput::Named(NamedKey::F(9)) => Key::F9,
+            KeyInput::Named(NamedKey::F(10)) => Key::F10,
+            KeyInput::Named(NamedKey::F(11)) => Key::F11,
+            KeyInput::Named(NamedKey::F(12)) => Key::F12,
+            KeyInput::Named(NamedKey::F(_)) => unreachable!(),
+        }
+    }
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int count);
+    fn to_modifier_key(modifier: KeyModifier) -> Key {
+        match modifier {
+            KeyModifier::Control => Key::Control,
+            KeyModifier::Alt => Key::Alt,
+            KeyModifier::Shift => Key::Shift,
+        }
+    }
 
-    [DllImport("user32.dll")]
-    public static extern int GetWindowTextLengthW(IntPtr hWnd);
+    fn process_name(pid: u32) -> Option<String> {
+        unsafe {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+            let mut buffer = vec![0u16; 1024];
+            let mut size = buffer.len() as u32;
+            let ok = QueryFullProcessImageNameW(
+                process,
+                PROCESS_NAME_WIN32,
+                PWSTR(buffer.as_mut_ptr()),
+                &mut size,
+            )
+            .is_ok();
+            let _ = CloseHandle(process);
 
-    [DllImport("user32.dll")]
-    public static extern bool IsWindowVisible(IntPtr hWnd);
+            if !ok || size == 0 {
+                return None;
+            }
 
-    [DllImport("user32.dll")]
-    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+            let path = String::from_utf16_lossy(&buffer[..size as usize]);
+            Path::new(&path)
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_string())
+        }
+    }
 
-    [DllImport("user32.dll")]
-    public static extern IntPtr GetForegroundWindow();
+    fn element_from_window_id(automation: &UIAutomation, raw: &str) -> Result<UIElement> {
+        let hwnd = parse_window_handle(raw)?;
+        automation
+            .element_from_handle(hwnd_as_handle(hwnd))
+            .map_err(|err| anyhow!(err.to_string()))
+            .context("Window not found for the provided window_id")
+    }
 
-    [DllImport("user32.dll")]
-    public static extern bool SetForegroundWindow(IntPtr hWnd);
+    fn element_bounds(automation: &UIAutomation, raw: &str) -> Result<Bounds> {
+        let element = element_from_window_id(automation, raw)?;
+        let rect = element
+            .get_bounding_rectangle()
+            .map_err(|err| anyhow!(err.to_string()))?;
+        Ok(to_bounds(&rect))
+    }
 
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+    fn list_windows_internal(
+        title_filter: &str,
+        app_name: &str,
+        include_hidden: bool,
+    ) -> Result<Vec<WindowInfo>> {
+        let automation = automation()?;
+        let root = automation
+            .get_root_element()
+            .map_err(|err| anyhow!(err.to_string()))?;
+        let walker = automation
+            .get_control_view_walker()
+            .map_err(|err| anyhow!(err.to_string()))?;
+        let foreground = hwnd_to_isize(unsafe { GetForegroundWindow() });
 
-    [DllImport("user32.dll")]
-    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+        let mut windows = Vec::new();
+        for element in child_elements(&walker, &root) {
+            let title = match element.get_name() {
+                Ok(value) => value.trim().to_string(),
+                Err(_) => continue,
+            };
+            if title.is_empty() {
+                continue;
+            }
+            if !title_filter.is_empty() && !contains_ignore_case(&title, title_filter) {
+                continue;
+            }
 
-    [DllImport("user32.dll")]
-    public static extern bool SetCursorPos(int x, int y);
+            let hwnd = match element.get_native_window_handle() {
+                Ok(handle) => {
+                    let hwnd: isize = handle.into();
+                    if hwnd == 0 {
+                        continue;
+                    }
+                    hwnd
+                }
+                Err(_) => continue,
+            };
 
-    [DllImport("user32.dll")]
-    public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+            let visible = is_window_visible(hwnd);
+            if !include_hidden && !visible {
+                continue;
+            }
+
+            let process_id = element.get_process_id().unwrap_or_default();
+            let process_name = process_name(process_id as u32);
+            if !app_name.is_empty()
+                && !process_name
+                    .as_deref()
+                    .is_some_and(|name| contains_ignore_case(name, app_name))
+            {
+                continue;
+            }
+
+            let rect = match element.get_bounding_rectangle() {
+                Ok(rect) => rect,
+                Err(_) => continue,
+            };
+            let bounds = to_bounds(&rect);
+
+            windows.push(WindowInfo {
+                hwnd: format_hwnd(hwnd),
+                title,
+                process_id,
+                process_name,
+                x: bounds.left,
+                y: bounds.top,
+                width: bounds.width,
+                height: bounds.height,
+                bounds,
+                is_visible: visible,
+                is_foreground: hwnd == foreground,
+            });
+        }
+
+        Ok(windows)
+    }
+
+    pub fn click(request: ClickRequest) -> Result<String> {
+        let automation = automation()?;
+        let has_screen_coords = request.x.is_some() || request.y.is_some();
+        let has_window_coords = request.window_x.is_some() || request.window_y.is_some();
+        let has_screenshot_coords =
+            request.screenshot_x.is_some() || request.screenshot_y.is_some();
+
+        let (screen_x, screen_y, mode) = if has_screen_coords {
+            let x = request.x.context("Provide both 'x' and 'y' together")?;
+            let y = request.y.context("Provide both 'x' and 'y' together")?;
+            (round_to_i32(x, "x")?, round_to_i32(y, "y")?, "screen")
+        } else if has_window_coords {
+            let window_x = request
+                .window_x
+                .context("Provide both 'window_x' and 'window_y' together")?;
+            let window_y = request
+                .window_y
+                .context("Provide both 'window_x' and 'window_y' together")?;
+            let window_id = request
+                .window_id
+                .as_deref()
+                .context("window_x/window_y require 'window_id' or 'hwnd'")?;
+            let bounds = element_bounds(&automation, window_id)?;
+            (
+                round_to_i32(bounds.left as f64 + window_x, "window_x")?,
+                round_to_i32(bounds.top as f64 + window_y, "window_y")?,
+                "window",
+            )
+        } else if has_screenshot_coords {
+            let screenshot_x = request
+                .screenshot_x
+                .context("Provide both 'screenshot_x' and 'screenshot_y' together")?;
+            let screenshot_y = request
+                .screenshot_y
+                .context("Provide both 'screenshot_x' and 'screenshot_y' together")?;
+
+            if let (Some(origin_x), Some(origin_y)) =
+                (request.screenshot_origin_x, request.screenshot_origin_y)
+            {
+                let scale = request
+                    .screenshot_scale
+                    .filter(|value| *value > 0.0)
+                    .unwrap_or(1.0);
+                (
+                    round_to_i32(origin_x + (screenshot_x / scale), "screenshot_x")?,
+                    round_to_i32(origin_y + (screenshot_y / scale), "screenshot_y")?,
+                    "screenshot_meta",
+                )
+            } else if let Some(window_id) = request.screenshot_window_id.as_deref() {
+                let bounds = element_bounds(&automation, window_id)?;
+                (
+                    round_to_i32(bounds.left as f64 + screenshot_x, "screenshot_x")?,
+                    round_to_i32(bounds.top as f64 + screenshot_y, "screenshot_y")?,
+                    "screenshot_window",
+                )
+            } else {
+                return Err(anyhow!(
+                    "screenshot_x/screenshot_y require screenshot_origin_x/screenshot_origin_y (+ optional screenshot_scale) or screenshot_window_id"
+                ));
+            }
+        } else {
+            return Err(anyhow!(
+                "Provide x/y, window_x/window_y + window_id, or screenshot_x/screenshot_y + screenshot metadata"
+            ));
+        };
+
+        let mut enigo = create_enigo()?;
+        enigo
+            .move_mouse(screen_x, screen_y, Coordinate::Abs)
+            .map_err(|err| anyhow!(err.to_string()))?;
+
+        let button = to_enigo_button(request.button);
+        for index in 0..request.click_count {
+            enigo
+                .button(button, Direction::Click)
+                .map_err(|err| anyhow!(err.to_string()))?;
+            if index + 1 < request.click_count {
+                thread::sleep(Duration::from_millis(90));
+            }
+        }
+
+        Ok(json!({
+            "action": "click",
+            "mode": mode,
+            "resolved_x": screen_x,
+            "resolved_y": screen_y,
+            "button": request.button_name,
+            "click_count": request.click_count
+        })
+        .to_string())
+    }
+
+    pub fn type_text(text: String) -> Result<String> {
+        let mut enigo = create_enigo()?;
+        enigo.text(&text).map_err(|err| anyhow!(err.to_string()))?;
+        Ok(json!({
+            "action": "type_text",
+            "length": text.chars().count()
+        })
+        .to_string())
+    }
+
+    pub fn press_key(
+        key: KeyInput,
+        modifiers: Vec<KeyModifier>,
+        key_name: String,
+    ) -> Result<String> {
+        let mut enigo = create_enigo()?;
+        for modifier in &modifiers {
+            enigo
+                .key(to_modifier_key(*modifier), Direction::Press)
+                .map_err(|err| anyhow!(err.to_string()))?;
+        }
+
+        let key_result = enigo
+            .key(to_enigo_key(key), Direction::Click)
+            .map_err(|err| anyhow!(err.to_string()));
+
+        let mut release_error = None;
+        for modifier in modifiers.iter().rev() {
+            if let Err(err) = enigo.key(to_modifier_key(*modifier), Direction::Release) {
+                release_error.get_or_insert_with(|| anyhow!(err.to_string()));
+            }
+        }
+
+        key_result?;
+        if let Some(err) = release_error {
+            return Err(err);
+        }
+
+        Ok(json!({
+            "action": "press_key",
+            "key": key_name,
+            "modifiers": modifiers.iter().map(|modifier| match modifier {
+                KeyModifier::Control => "ctrl",
+                KeyModifier::Alt => "alt",
+                KeyModifier::Shift => "shift",
+            }).collect::<Vec<_>>()
+        })
+        .to_string())
+    }
+
+    pub fn scroll(request: ScrollRequest) -> Result<String> {
+        let mut enigo = create_enigo()?;
+        if let (Some(x), Some(y)) = (request.x, request.y) {
+            enigo
+                .move_mouse(x as i32, y as i32, Coordinate::Abs)
+                .map_err(|err| anyhow!(err.to_string()))?;
+        }
+
+        let steps = if request.delta == 0 {
+            0
+        } else {
+            let magnitude = ((request.delta.abs() + 119) / 120) as i32;
+            if request.delta > 0 {
+                -magnitude
+            } else {
+                magnitude
+            }
+        };
+
+        if steps != 0 {
+            enigo
+                .scroll(steps, Axis::Vertical)
+                .map_err(|err| anyhow!(err.to_string()))?;
+        }
+
+        Ok(json!({
+            "action": "scroll",
+            "delta": request.delta,
+            "applied_steps": steps,
+            "x": request.x,
+            "y": request.y
+        })
+        .to_string())
+    }
+
+    pub fn find_text(request: FindTextRequest) -> Result<String> {
+        let automation = automation()?;
+        let root = if let Some(window_id) = request.window_id.as_deref() {
+            element_from_window_id(&automation, window_id)?
+        } else {
+            automation
+                .get_root_element()
+                .map_err(|err| anyhow!(err.to_string()))?
+        };
+        let walker = automation
+            .get_control_view_walker()
+            .map_err(|err| anyhow!(err.to_string()))?;
+
+        let mut available_elements = Vec::new();
+        let mut seen_names = HashSet::new();
+        let mut matches = Vec::new();
+
+        let mut stack = child_elements(&walker, &root);
+        stack.reverse();
+
+        while let Some(element) = stack.pop() {
+            let mut children = child_elements(&walker, &element);
+            children.reverse();
+            stack.extend(children);
+
+            let name = match element.get_name() {
+                Ok(name) => name.trim().to_string(),
+                Err(_) => continue,
+            };
+            if name.is_empty() {
+                continue;
+            }
+
+            if seen_names.len() < 50 && seen_names.insert(name.clone()) {
+                available_elements.push(name.clone());
+            }
+
+            let process_id = element.get_process_id().unwrap_or_default();
+            let process_name = process_name(process_id as u32);
+            if !request.app_name.is_empty()
+                && !process_name
+                    .as_deref()
+                    .is_some_and(|value| contains_ignore_case(value, &request.app_name))
+            {
+                continue;
+            }
+            if !contains_ignore_case(&name, &request.text) {
+                continue;
+            }
+            if element.is_offscreen().unwrap_or(false) {
+                continue;
+            }
+
+            let rect = match element.get_bounding_rectangle() {
+                Ok(rect) => rect,
+                Err(_) => continue,
+            };
+            let bounds = to_bounds(&rect);
+            if bounds.width <= 0 || bounds.height <= 0 {
+                continue;
+            }
+
+            let control_type = element
+                .get_control_type()
+                .map(|value| format!("{value:?}"))
+                .unwrap_or_else(|_| "Unknown".to_string());
+
+            matches.push(TextMatch {
+                name,
+                process_id,
+                process_name,
+                control_type,
+                x: bounds.left,
+                y: bounds.top,
+                width: bounds.width,
+                height: bounds.height,
+                center_x: bounds.left + (bounds.width / 2),
+                center_y: bounds.top + (bounds.height / 2),
+            });
+
+            if matches.len() >= request.max_results {
+                break;
+            }
+        }
+
+        Ok(build_find_text_response(
+            &request.text,
+            &matches,
+            &available_elements,
+        ))
+    }
+
+    pub fn list_windows(
+        title_filter: String,
+        app_name: String,
+        include_hidden: bool,
+    ) -> Result<String> {
+        Ok(serde_json::to_string(&list_windows_internal(
+            &title_filter,
+            &app_name,
+            include_hidden,
+        )?)?)
+    }
+
+    pub fn focus_window(request: FocusWindowRequest) -> Result<String> {
+        let windows = list_windows_internal("", "", true)?;
+        let target = if let Some(raw) = request.hwnd.as_deref() {
+            let hwnd = parse_window_handle(raw)?;
+            windows
+                .into_iter()
+                .find(|window| parse_window_handle(&window.hwnd).ok() == Some(hwnd))
+                .context("No matching window found")?
+        } else if let Some(title) = request.title.as_deref() {
+            windows
+                .into_iter()
+                .find(|window| window.title.eq_ignore_ascii_case(title))
+                .context("No matching window found")?
+        } else if let Some(title_contains) = request.title_contains.as_deref() {
+            windows
+                .into_iter()
+                .find(|window| contains_ignore_case(&window.title, title_contains))
+                .context("No matching window found")?
+        } else {
+            return Err(anyhow!(
+                "Provide one of 'hwnd', 'title', or 'title_contains'"
+            ));
+        };
+
+        let hwnd = parse_window_handle(&target.hwnd)?;
+        unsafe {
+            let _ = ShowWindow(hwnd_from_isize(hwnd), SW_RESTORE);
+        }
+        thread::sleep(Duration::from_millis(120));
+        let focused = unsafe { SetForegroundWindow(hwnd_from_isize(hwnd)).as_bool() };
+
+        let automation = automation()?;
+        if let Ok(element) = automation.element_from_handle(hwnd_as_handle(hwnd)) {
+            let _ = element.set_focus();
+        }
+
+        let is_foreground = hwnd_to_isize(unsafe { GetForegroundWindow() }) == hwnd;
+        Ok(json!({
+            "action": "focus_window",
+            "hwnd": target.hwnd,
+            "title": target.title,
+            "focused": focused || is_foreground
+        })
+        .to_string())
+    }
 }
-"@
-"#
+
+#[cfg(not(target_os = "windows"))]
+mod platform {
+    use super::*;
+
+    fn unsupported() -> Result<String> {
+        Err(anyhow!(
+            "Desktop automation tools are currently supported on Windows only."
+        ))
+    }
+
+    pub fn click(_request: ClickRequest) -> Result<String> {
+        unsupported()
+    }
+
+    pub fn type_text(_text: String) -> Result<String> {
+        unsupported()
+    }
+
+    pub fn press_key(
+        _key: KeyInput,
+        _modifiers: Vec<KeyModifier>,
+        _key_name: String,
+    ) -> Result<String> {
+        unsupported()
+    }
+
+    pub fn scroll(_request: ScrollRequest) -> Result<String> {
+        unsupported()
+    }
+
+    pub fn find_text(_request: FindTextRequest) -> Result<String> {
+        unsupported()
+    }
+
+    pub fn list_windows(
+        _title_filter: String,
+        _app_name: String,
+        _include_hidden: bool,
+    ) -> Result<String> {
+        unsupported()
+    }
+
+    pub fn focus_window(_request: FocusWindowRequest) -> Result<String> {
+        unsupported()
+    }
 }
 
 #[async_trait]
@@ -412,134 +1128,29 @@ impl Tool for ClickTool {
             );
         }
 
-        let (down_flag, up_flag) = match button.as_str() {
-            "left" => ("0x0002", "0x0004"),
-            "right" => ("0x0008", "0x0010"),
-            "middle" | "center" => ("0x0020", "0x0040"),
-            _ => {
-                return ToolResult::error(format!(
-                    "Unsupported button '{button}'. Use left, right, center, or middle."
-                ))
-            }
+        let button_kind = match parse_button_kind(&button) {
+            Ok(value) => value,
+            Err(err) => return ToolResult::error(err),
         };
 
-        let script = format!(
-            r#"
-$ErrorActionPreference = 'Stop'
-{}
-[void][DesktopAutomationNative]::SetProcessDPIAware()
-$rawX = {}
-$rawY = {}
-$windowX = {}
-$windowY = {}
-$windowIdInput = {}
-$screenshotX = {}
-$screenshotY = {}
-$screenshotOriginX = {}
-$screenshotOriginY = {}
-$screenshotScale = {}
-$screenshotWindowIdInput = {}
-
-function Parse-WindowHandle([string]$value) {{
-    if ([string]::IsNullOrWhiteSpace($value)) {{
-        throw "Window handle is required"
-    }}
-    $trimmed = $value.Trim()
-    if ($trimmed.StartsWith('0x', [System.StringComparison]::OrdinalIgnoreCase)) {{
-        return [IntPtr]::new([Convert]::ToInt64($trimmed.Substring(2), 16))
-    }}
-    return [IntPtr]::new([Convert]::ToInt64($trimmed, 10))
-}}
-
-function Get-WindowBounds([IntPtr]$hWnd) {{
-    $rect = New-Object DesktopAutomationNative+RECT
-    if (-not [DesktopAutomationNative]::GetWindowRect($hWnd, [ref]$rect)) {{
-        throw "Failed to query window bounds"
-    }}
-    [pscustomobject]@{{
-        left = $rect.Left
-        top = $rect.Top
-        width = $rect.Right - $rect.Left
-        height = $rect.Bottom - $rect.Top
-    }}
-}}
-
-$screenX = $null
-$screenY = $null
-$mode = $null
-
-if ($rawX -ne $null -and $rawY -ne $null) {{
-    $screenX = $rawX
-    $screenY = $rawY
-    $mode = 'screen'
-}} elseif ($windowX -ne $null -and $windowY -ne $null) {{
-    $targetWindow = Parse-WindowHandle $windowIdInput
-    $bounds = Get-WindowBounds $targetWindow
-    $screenX = $bounds.left + $windowX
-    $screenY = $bounds.top + $windowY
-    $mode = 'window'
-}} elseif ($screenshotX -ne $null -and $screenshotY -ne $null) {{
-    if ($screenshotOriginX -ne $null -and $screenshotOriginY -ne $null) {{
-        if ($screenshotScale -eq $null -or $screenshotScale -le 0) {{
-            $screenshotScale = 1.0
-        }}
-        $screenX = $screenshotOriginX + ($screenshotX / $screenshotScale)
-        $screenY = $screenshotOriginY + ($screenshotY / $screenshotScale)
-        $mode = 'screenshot_meta'
-    }} elseif (-not [string]::IsNullOrWhiteSpace($screenshotWindowIdInput)) {{
-        $targetWindow = Parse-WindowHandle $screenshotWindowIdInput
-        $bounds = Get-WindowBounds $targetWindow
-        $screenX = $bounds.left + $screenshotX
-        $screenY = $bounds.top + $screenshotY
-        $mode = 'screenshot_window'
-    }} else {{
-        throw "screenshot_x/screenshot_y require screenshot_origin_x/screenshot_origin_y (+ optional screenshot_scale) or screenshot_window_id"
-    }}
-}} else {{
-    throw "Unable to resolve click coordinates"
-}}
-
-$screenXInt = [int][Math]::Round($screenX)
-$screenYInt = [int][Math]::Round($screenY)
-[void][DesktopAutomationNative]::SetCursorPos($screenXInt, $screenYInt)
-for ($i = 0; $i -lt {}; $i++) {{
-    [DesktopAutomationNative]::mouse_event({}, 0, 0, 0, [UIntPtr]::Zero)
-    Start-Sleep -Milliseconds 35
-    [DesktopAutomationNative]::mouse_event({}, 0, 0, 0, [UIntPtr]::Zero)
-    if ($i + 1 -lt {}) {{
-        Start-Sleep -Milliseconds 90
-    }}
-}}
-[pscustomobject]@{{
-    action = 'click'
-    mode = $mode
-    resolved_x = $screenXInt
-    resolved_y = $screenYInt
-    button = '{}'
-    click_count = {}
-}} | ConvertTo-Json -Compress
-"#,
-            user32_script(),
-            ps_number_or_null(x),
-            ps_number_or_null(y),
-            ps_number_or_null(window_x),
-            ps_number_or_null(window_y),
-            ps_quote(window_id.as_deref().unwrap_or("")),
-            ps_number_or_null(screenshot_x),
-            ps_number_or_null(screenshot_y),
-            ps_number_or_null(screenshot_origin_x),
-            ps_number_or_null(screenshot_origin_y),
-            ps_number_or_null(screenshot_scale),
-            ps_quote(screenshot_window_id.as_deref().unwrap_or("")),
+        let request = ClickRequest {
+            x,
+            y,
+            window_x,
+            window_y,
+            window_id,
+            screenshot_x,
+            screenshot_y,
+            screenshot_origin_x,
+            screenshot_origin_y,
+            screenshot_scale,
+            screenshot_window_id,
+            button: button_kind,
+            button_name: button,
             click_count,
-            down_flag,
-            up_flag,
-            click_count,
-            button,
-            click_count
-        );
+        };
 
-        run_powershell(script, timeout_secs).await
+        run_desktop_operation(timeout_secs, move || platform::click(request)).await
     }
 }
 
@@ -571,27 +1182,12 @@ impl Tool for TypeTextTool {
 
     async fn execute(&self, input: serde_json::Value) -> ToolResult {
         let text = match input.get("text").and_then(|v| v.as_str()) {
-            Some(value) => value,
+            Some(value) => value.to_string(),
             None => return ToolResult::error("Missing 'text' parameter".into()),
         };
         let timeout_secs = parse_timeout_secs(&input);
-        let encoded = encode_send_keys_text(text);
 
-        let script = format!(
-            r#"
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.SendKeys]::SendWait({})
-[pscustomobject]@{{
-    action = 'type_text'
-    length = {}
-}} | ConvertTo-Json -Compress
-"#,
-            ps_quote(&encoded),
-            text.chars().count()
-        );
-
-        run_powershell(script, timeout_secs).await
+        run_desktop_operation(timeout_secs, move || platform::type_text(text)).await
     }
 }
 
@@ -633,42 +1229,32 @@ impl Tool for PressKeyTool {
             Some(value) => value,
             None => return ToolResult::error("Missing 'key' parameter".into()),
         };
-        let modifiers: Vec<String> = input
+        let modifiers_raw: Vec<String> = input
             .get("modifiers")
             .and_then(|v| v.as_array())
             .map(|items| {
                 items
                     .iter()
-                    .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                    .filter_map(|item| item.as_str().map(|value| value.to_string()))
                     .collect()
             })
             .unwrap_or_default();
         let timeout_secs = parse_timeout_secs(&input);
 
-        let encoded = match send_keys_with_modifiers(key, &modifiers) {
+        let key_input = match parse_key_input(key) {
             Ok(value) => value,
             Err(err) => return ToolResult::error(err),
         };
-        let modifiers_json = serde_json::to_string(&modifiers).unwrap_or_else(|_| "[]".to_string());
+        let modifiers = match parse_modifiers(&modifiers_raw) {
+            Ok(value) => value,
+            Err(err) => return ToolResult::error(err),
+        };
+        let key_name = key.to_string();
 
-        let script = format!(
-            r#"
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Windows.Forms
-$modifiers = {} | ConvertFrom-Json
-[System.Windows.Forms.SendKeys]::SendWait({})
-[pscustomobject]@{{
-    action = 'press_key'
-    key = {}
-    modifiers = $modifiers
-}} | ConvertTo-Json -Compress
-"#,
-            ps_quote(&modifiers_json),
-            ps_quote(&encoded),
-            ps_quote(key),
-        );
-
-        run_powershell(script, timeout_secs).await
+        run_desktop_operation(timeout_secs, move || {
+            platform::press_key(key_input, modifiers, key_name)
+        })
+        .await
     }
 }
 
@@ -720,39 +1306,8 @@ impl Tool for ScrollTool {
         }
         let timeout_secs = parse_timeout_secs(&input);
 
-        let cursor_move = match (x, y) {
-            (Some(x), Some(y)) => {
-                format!("[void][DesktopAutomationNative]::SetCursorPos({x}, {y})")
-            }
-            _ => String::new(),
-        };
-
-        let script = format!(
-            r#"
-$ErrorActionPreference = 'Stop'
-{}
-[void][DesktopAutomationNative]::SetProcessDPIAware()
-{}
-$wheelData = [System.BitConverter]::ToUInt32([System.BitConverter]::GetBytes([int]({})), 0)
-[DesktopAutomationNative]::mouse_event(0x0800, 0, 0, $wheelData, [UIntPtr]::Zero)
-[pscustomobject]@{{
-    action = 'scroll'
-    delta = {}
-    x = {}
-    y = {}
-}} | ConvertTo-Json -Compress
-"#,
-            user32_script(),
-            cursor_move,
-            delta,
-            delta,
-            x.map(|v| v.to_string())
-                .unwrap_or_else(|| "$null".to_string()),
-            y.map(|v| v.to_string())
-                .unwrap_or_else(|| "$null".to_string())
-        );
-
-        run_powershell(script, timeout_secs).await
+        let request = ScrollRequest { delta, x, y };
+        run_desktop_operation(timeout_secs, move || platform::scroll(request)).await
     }
 }
 
@@ -765,12 +1320,12 @@ impl Tool for FindTextTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "find_text".into(),
-            description: "Find text on screen using Windows UI Automation and return screen coordinates ready for click. Prefer this over guessing coordinates from screenshots for buttons, labels, and menu items.".into(),
+            description: "Find text on screen using Windows UI Automation with case-insensitive contains matching and return screen coordinates ready for click. If no text matches, the result includes a screenshot-plus-vision fallback instruction.".into(),
             input_schema: schema_object(
                 json!({
                     "text": {
                         "type": "string",
-                        "description": "Text or label to search for"
+                        "description": "Text or label substring to search for using case-insensitive contains matching"
                     },
                     "window_id": {
                         "type": ["string", "integer"],
@@ -800,134 +1355,30 @@ impl Tool for FindTextTool {
 
     async fn execute(&self, input: serde_json::Value) -> ToolResult {
         let text = match input.get("text").and_then(|v| v.as_str()) {
-            Some(value) if !value.trim().is_empty() => value.trim(),
+            Some(value) if !value.trim().is_empty() => value.trim().to_string(),
             _ => return ToolResult::error("Missing 'text' parameter".into()),
         };
         let window_id =
             parse_stringish(&input, "window_id").or_else(|| parse_stringish(&input, "hwnd"));
-        let app_name = input.get("app_name").and_then(|v| v.as_str()).unwrap_or("");
+        let app_name = input
+            .get("app_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let max_results = input
             .get("max_results")
             .and_then(|v| v.as_u64())
             .unwrap_or(10)
-            .max(1);
+            .max(1) as usize;
         let timeout_secs = parse_timeout_secs(&input);
 
-        let script = format!(
-            r#"
-$ErrorActionPreference = 'Stop'
-{}
-[void][DesktopAutomationNative]::SetProcessDPIAware()
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
-$searchText = {}
-$windowIdInput = {}
-$appNameFilter = {}
-$maxResults = {}
-
-function Parse-WindowHandle([string]$value) {{
-    if ([string]::IsNullOrWhiteSpace($value)) {{
-        throw "Window handle is required"
-    }}
-    $trimmed = $value.Trim()
-    if ($trimmed.StartsWith('0x', [System.StringComparison]::OrdinalIgnoreCase)) {{
-        return [IntPtr]::new([Convert]::ToInt64($trimmed.Substring(2), 16))
-    }}
-    return [IntPtr]::new([Convert]::ToInt64($trimmed, 10))
-}}
-
-$root = [System.Windows.Automation.AutomationElement]::RootElement
-if (-not [string]::IsNullOrWhiteSpace($windowIdInput)) {{
-    $root = [System.Windows.Automation.AutomationElement]::FromHandle((Parse-WindowHandle $windowIdInput))
-    if ($null -eq $root) {{
-        throw "Window not found for the provided window_id"
-    }}
-}}
-
-$pidNameCache = @{{}}
-function Get-ProcessNameForPid([int]$pid) {{
-    if ($pidNameCache.ContainsKey($pid)) {{
-        return $pidNameCache[$pid]
-    }}
-    $name = ''
-    try {{
-        $name = (Get-Process -Id $pid -ErrorAction Stop).ProcessName
-    }} catch {{}}
-    $pidNameCache[$pid] = $name
-    return $name
-}}
-
-$matches = New-Object System.Collections.Generic.List[object]
-$available = New-Object System.Collections.Generic.HashSet[string]
-$all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-for ($i = 0; $i -lt $all.Count; $i++) {{
-    $el = $all.Item($i)
-    try {{
-        $name = $el.Current.Name
-        $pid = [int]$el.Current.ProcessId
-        $controlType = $el.Current.ControlType.ProgrammaticName
-        $rect = $el.Current.BoundingRectangle
-    }} catch {{
-        continue
-    }}
-
-    if ([string]::IsNullOrWhiteSpace($name)) {{
-        continue
-    }}
-    [void]$available.Add($name)
-
-    if ($rect.Width -le 0 -or $rect.Height -le 0) {{
-        continue
-    }}
-
-    $processName = Get-ProcessNameForPid $pid
-    $processNameForMatch = if ($null -eq $processName) {{ '' }} else {{ [string]$processName }}
-    if (-not [string]::IsNullOrEmpty($appNameFilter) -and ($processNameForMatch.IndexOf($appNameFilter, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {{
-        continue
-    }}
-    if ($name.IndexOf($searchText, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {{
-        continue
-    }}
-
-    $matches.Add([pscustomobject]@{{
-        name = $name
-        process_id = $pid
-        process_name = $processName
-        control_type = $controlType
-        x = [int][Math]::Round($rect.Left)
-        y = [int][Math]::Round($rect.Top)
-        width = [int][Math]::Round($rect.Width)
-        height = [int][Math]::Round($rect.Height)
-        center_x = [int][Math]::Round($rect.Left + ($rect.Width / 2))
-        center_y = [int][Math]::Round($rect.Top + ($rect.Height / 2))
-    }}) | Out-Null
-
-    if ($matches.Count -ge $maxResults) {{
-        break
-    }}
-}}
-
-if ($matches.Count -gt 0) {{
-    [pscustomobject]@{{
-        query = $searchText
-        matches = $matches
-    }} | ConvertTo-Json -Depth 5 -Compress
-}} else {{
-    [pscustomobject]@{{
-        query = $searchText
-        matches = @()
-        available_elements = @($available | Select-Object -First 50)
-    }} | ConvertTo-Json -Depth 5 -Compress
-}}
-"#,
-            user32_script(),
-            ps_quote(text),
-            ps_quote(window_id.as_deref().unwrap_or("")),
-            ps_quote(app_name),
-            max_results
-        );
-
-        run_powershell(script, timeout_secs).await
+        let request = FindTextRequest {
+            text,
+            window_id,
+            app_name,
+            max_results,
+        };
+        run_desktop_operation(timeout_secs, move || platform::find_text(request)).await
     }
 }
 
@@ -969,92 +1420,23 @@ impl Tool for ListWindowsTool {
         let title_filter = input
             .get("title_filter")
             .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let app_name = input.get("app_name").and_then(|v| v.as_str()).unwrap_or("");
+            .unwrap_or("")
+            .to_string();
+        let app_name = input
+            .get("app_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let include_hidden = input
             .get("include_hidden")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let timeout_secs = parse_timeout_secs(&input);
 
-        let script = format!(
-            r#"
-$ErrorActionPreference = 'Stop'
-{}
-[void][DesktopAutomationNative]::SetProcessDPIAware()
-$titleFilter = {}
-$appNameFilter = {}
-$includeHidden = {}
-$foreground = [DesktopAutomationNative]::GetForegroundWindow()
-$items = New-Object System.Collections.Generic.List[object]
-
-[DesktopAutomationNative]::EnumWindows({{
-    param($hWnd, $lParam)
-
-    $visible = [DesktopAutomationNative]::IsWindowVisible($hWnd)
-    if (-not $includeHidden -and -not $visible) {{
-        return $true
-    }}
-
-    $length = [DesktopAutomationNative]::GetWindowTextLengthW($hWnd)
-    $builder = New-Object System.Text.StringBuilder ($length + 1)
-    [void][DesktopAutomationNative]::GetWindowTextW($hWnd, $builder, $builder.Capacity)
-    $title = $builder.ToString()
-    if ([string]::IsNullOrWhiteSpace($title)) {{
-        return $true
-    }}
-    if (-not [string]::IsNullOrEmpty($titleFilter) -and $title.IndexOf($titleFilter, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {{
-        return $true
-    }}
-
-    $windowPid = 0
-    [void][DesktopAutomationNative]::GetWindowThreadProcessId($hWnd, [ref]$windowPid)
-    $processName = $null
-    try {{
-        $processName = (Get-Process -Id $windowPid -ErrorAction Stop).ProcessName
-    }} catch {{}}
-    $processNameForMatch = if ($null -eq $processName) {{ '' }} else {{ [string]$processName }}
-    if (-not [string]::IsNullOrEmpty($appNameFilter) -and ($processNameForMatch.IndexOf($appNameFilter, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {{
-        return $true
-    }}
-
-    $rect = New-Object DesktopAutomationNative+RECT
-    if (-not [DesktopAutomationNative]::GetWindowRect($hWnd, [ref]$rect)) {{
-        return $true
-    }}
-
-    $items.Add([pscustomobject]@{{
-        hwnd = ('0x{{0:X}}' -f $hWnd.ToInt64())
-        title = $title
-        process_id = $windowPid
-        process_name = $processName
-        x = $rect.Left
-        y = $rect.Top
-        width = ($rect.Right - $rect.Left)
-        height = ($rect.Bottom - $rect.Top)
-        bounds = [pscustomobject]@{{
-            left = $rect.Left
-            top = $rect.Top
-            right = $rect.Right
-            bottom = $rect.Bottom
-            width = ($rect.Right - $rect.Left)
-            height = ($rect.Bottom - $rect.Top)
-        }}
-        is_visible = $visible
-        is_foreground = ($hWnd -eq $foreground)
-    }}) | Out-Null
-    return $true
-}}, [IntPtr]::Zero) | Out-Null
-
-$items | ConvertTo-Json -Depth 4 -Compress
-"#,
-            user32_script(),
-            ps_quote(title_filter),
-            ps_quote(app_name),
-            if include_hidden { "$true" } else { "$false" }
-        );
-
-        run_powershell(script, timeout_secs).await
+        run_desktop_operation(timeout_secs, move || {
+            platform::list_windows(title_filter, app_name, include_hidden)
+        })
+        .await
     }
 }
 
@@ -1093,119 +1475,95 @@ impl Tool for FocusWindowTool {
     }
 
     async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let hwnd = input.get("hwnd").and_then(|v| v.as_str());
-        let title = input.get("title").and_then(|v| v.as_str());
-        let title_contains = input.get("title_contains").and_then(|v| v.as_str());
+        let hwnd = input
+            .get("hwnd")
+            .and_then(|v| v.as_str())
+            .map(|value| value.to_string());
+        let title = input
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(|value| value.to_string());
+        let title_contains = input
+            .get("title_contains")
+            .and_then(|v| v.as_str())
+            .map(|value| value.to_string());
         let timeout_secs = parse_timeout_secs(&input);
 
         if hwnd.is_none() && title.is_none() && title_contains.is_none() {
             return ToolResult::error("Provide one of 'hwnd', 'title', or 'title_contains'".into());
         }
 
-        let script = format!(
-            r#"
-$ErrorActionPreference = 'Stop'
-{}
-$hwndInput = {}
-$titleExact = {}
-$titleContains = {}
-
-function Get-WindowTitle([IntPtr]$hWnd) {{
-    $length = [DesktopAutomationNative]::GetWindowTextLengthW($hWnd)
-    $builder = New-Object System.Text.StringBuilder ($length + 1)
-    [void][DesktopAutomationNative]::GetWindowTextW($hWnd, $builder, $builder.Capacity)
-    $builder.ToString()
-}}
-
-$target = [IntPtr]::Zero
-$matchedTitle = $null
-
-if (-not [string]::IsNullOrWhiteSpace($hwndInput)) {{
-    $raw = $hwndInput.Trim()
-    if ($raw.StartsWith('0x', [System.StringComparison]::OrdinalIgnoreCase)) {{
-        $value = [Convert]::ToInt64($raw.Substring(2), 16)
-    }} else {{
-        $value = [Convert]::ToInt64($raw, 10)
-    }}
-    $target = [IntPtr]::new($value)
-    $matchedTitle = Get-WindowTitle $target
-}}
-
-if ($target -eq [IntPtr]::Zero) {{
-    [DesktopAutomationNative]::EnumWindows({{
-        param($hWnd, $lParam)
-        if (-not [DesktopAutomationNative]::IsWindowVisible($hWnd)) {{
-            return $true
-        }}
-
-        $windowTitle = Get-WindowTitle $hWnd
-        if ([string]::IsNullOrWhiteSpace($windowTitle)) {{
-            return $true
-        }}
-
-        $isMatch = $false
-        if (-not [string]::IsNullOrWhiteSpace($titleExact)) {{
-            $isMatch = $windowTitle.Equals($titleExact, [System.StringComparison]::OrdinalIgnoreCase)
-        }} elseif (-not [string]::IsNullOrWhiteSpace($titleContains)) {{
-            $isMatch = $windowTitle.IndexOf($titleContains, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-        }}
-
-        if ($isMatch) {{
-            $script:target = $hWnd
-            $script:matchedTitle = $windowTitle
-            return $false
-        }}
-
-        return $true
-    }}, [IntPtr]::Zero) | Out-Null
-}}
-
-if ($target -eq [IntPtr]::Zero) {{
-    throw 'No matching window found'
-}}
-
-[void][DesktopAutomationNative]::ShowWindowAsync($target, 9)
-Start-Sleep -Milliseconds 120
-$focused = [DesktopAutomationNative]::SetForegroundWindow($target)
-
-[pscustomobject]@{{
-    action = 'focus_window'
-    hwnd = ('0x{{0:X}}' -f $target.ToInt64())
-    title = $matchedTitle
-    focused = [bool]$focused
-}} | ConvertTo-Json -Compress
-"#,
-            user32_script(),
-            ps_quote(hwnd.unwrap_or("")),
-            ps_quote(title.unwrap_or("")),
-            ps_quote(title_contains.unwrap_or(""))
-        );
-
-        run_powershell(script, timeout_secs).await
+        let request = FocusWindowRequest {
+            hwnd,
+            title,
+            title_contains,
+        };
+        run_desktop_operation(timeout_secs, move || platform::focus_window(request)).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     #[test]
-    fn test_encode_send_keys_text_escapes_special_chars() {
+    fn test_parse_key_input_named_key() {
         assert_eq!(
-            encode_send_keys_text("+^%~(){}[]\n\t"),
-            "{+}{^}{%}{~}{(}{)}{{}{}}{[}{]}{ENTER}{TAB}"
+            parse_key_input("enter").unwrap(),
+            KeyInput::Named(NamedKey::Return)
+        );
+        assert_eq!(
+            parse_key_input("F5").unwrap(),
+            KeyInput::Named(NamedKey::F(5))
         );
     }
 
     #[test]
-    fn test_send_keys_token_named_key() {
-        assert_eq!(send_keys_token("enter").unwrap(), "{ENTER}");
-        assert_eq!(send_keys_token("F5").unwrap(), "{F5}");
+    fn test_parse_key_input_character() {
+        assert_eq!(parse_key_input("a").unwrap(), KeyInput::Character('a'));
     }
 
     #[test]
-    fn test_send_keys_with_modifiers() {
+    fn test_parse_modifiers() {
         let modifiers = vec!["ctrl".to_string(), "shift".to_string()];
-        assert_eq!(send_keys_with_modifiers("a", &modifiers).unwrap(), "^+a");
+        assert_eq!(
+            parse_modifiers(&modifiers).unwrap(),
+            vec![KeyModifier::Control, KeyModifier::Shift]
+        );
+    }
+
+    #[test]
+    fn test_contains_ignore_case_uses_substring_matching() {
+        assert!(contains_ignore_case("Save As", "save"));
+        assert!(contains_ignore_case("Save As", "as"));
+        assert!(!contains_ignore_case("Save As", "open"));
+    }
+
+    #[test]
+    fn test_build_find_text_response_includes_fallback_when_empty() {
+        let response =
+            build_find_text_response::<Value>("submit", &[], &["Save".into(), "Cancel".into()]);
+        let parsed: Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(parsed["query"], "submit");
+        assert_eq!(parsed["match_type"], FIND_TEXT_MATCH_MODE);
+        assert_eq!(
+            parsed["fallback_strategy"],
+            "capture_screenshot_with_vision"
+        );
+        assert_eq!(parsed["fallback_message"], FIND_TEXT_VISION_FALLBACK);
+        assert!(parsed["available_elements"].is_array());
+    }
+
+    #[test]
+    fn test_build_find_text_response_omits_fallback_when_matches_exist() {
+        let response = build_find_text_response(&"submit", &[json!({ "name": "Submit" })], &[]);
+        let parsed: Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(parsed["query"], "submit");
+        assert_eq!(parsed["match_type"], FIND_TEXT_MATCH_MODE);
+        assert!(parsed.get("fallback_strategy").is_none());
+        assert!(parsed.get("fallback_message").is_none());
     }
 }
