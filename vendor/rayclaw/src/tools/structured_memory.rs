@@ -358,7 +358,9 @@ mod tests {
     #[tokio::test]
     async fn test_delete_global_memory_allowed_for_desktop_chat() {
         let db = test_db();
-        let id = db.insert_memory(None, "desktop global", "KNOWLEDGE").unwrap();
+        let id = db
+            .insert_memory(None, "desktop global", "KNOWLEDGE")
+            .unwrap();
         let tool = StructuredMemoryDeleteTool::new(db.clone());
         let result = tool
             .execute(json!({

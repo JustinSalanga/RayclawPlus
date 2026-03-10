@@ -179,6 +179,21 @@ impl ChannelAdapter for DesktopAdapter {
     async fn send_text(&self, _external_chat_id: &str, _text: &str) -> Result<(), String> {
         Ok(())
     }
+
+    async fn send_attachment(
+        &self,
+        _external_chat_id: &str,
+        file_path: &std::path::Path,
+        caption: Option<&str>,
+    ) -> Result<String, String> {
+        let path = file_path.to_string_lossy();
+        let mut content = format!("![attachment]({path})");
+        if let Some(caption) = caption.filter(|text| !text.trim().is_empty()) {
+            content.push_str("\n\n");
+            content.push_str(caption.trim());
+        }
+        Ok(content)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -234,10 +249,10 @@ fn synthesize_channels(config: &mut Config) {
 
 /// Initialize the full agent (DB, memory, skills, MCP, ACP, LLM, tools)
 /// with channel adapters registered and ready to start.
-pub(crate) async fn init_agent(
-    mut config: Config,
-) -> Result<Arc<AppState>, String> {
-    config.validate_for_sdk().map_err(|e| format!("Config validation: {e}"))?;
+pub(crate) async fn init_agent(mut config: Config) -> Result<Arc<AppState>, String> {
+    config
+        .validate_for_sdk()
+        .map_err(|e| format!("Config validation: {e}"))?;
 
     // Expand tilde in paths
     if config.data_dir.starts_with("~/") {
@@ -354,8 +369,10 @@ fn register_channels(config: &Config, registry: &mut ChannelRegistry) {
                 feishu_cfg.app_secret.clone(),
                 feishu_cfg.domain.clone(),
             )));
-            info!("Registered channel: feishu (domain={}, mode={})",
-                feishu_cfg.domain, feishu_cfg.connection_mode);
+            info!(
+                "Registered channel: feishu (domain={}, mode={})",
+                feishu_cfg.domain, feishu_cfg.connection_mode
+            );
         } else {
             warn!("Feishu channel: app_id or app_secret is empty — skipping");
         }
@@ -400,8 +417,8 @@ pub(crate) fn start_single_channel(
             }))
         }
         "slack" => {
-            let slack_cfg = config
-                .channel_config::<rayclaw::channels::slack::SlackChannelConfig>("slack")?;
+            let slack_cfg =
+                config.channel_config::<rayclaw::channels::slack::SlackChannelConfig>("slack")?;
             if slack_cfg.bot_token.trim().is_empty() || slack_cfg.app_token.trim().is_empty() {
                 return None;
             }
@@ -492,7 +509,11 @@ pub fn run() {
                         );
                         match init_agent(config).await {
                             Ok(state) => {
-                                let h = start_channels(&state, &tokio::runtime::Handle::current(), &channel_enabled);
+                                let h = start_channels(
+                                    &state,
+                                    &tokio::runtime::Handle::current(),
+                                    &channel_enabled,
+                                );
                                 (Some(state), None, h)
                             }
                             Err(e) => {

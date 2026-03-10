@@ -97,7 +97,11 @@ impl Tool for TodoReadTool {
     async fn execute(&self, input: serde_json::Value) -> ToolResult {
         let chat_id = match resolve_chat_id(&input) {
             Some(id) => id,
-            None => return ToolResult::error("Missing 'chat_id' parameter and no current chat is available".into()),
+            None => {
+                return ToolResult::error(
+                    "Missing 'chat_id' parameter and no current chat is available".into(),
+                )
+            }
         };
         if let Err(e) = authorize_chat_access(&input, chat_id) {
             return ToolResult::error(e);
@@ -167,7 +171,11 @@ impl Tool for TodoWriteTool {
     async fn execute(&self, input: serde_json::Value) -> ToolResult {
         let chat_id = match resolve_chat_id(&input) {
             Some(id) => id,
-            None => return ToolResult::error("Missing 'chat_id' parameter and no current chat is available".into()),
+            None => {
+                return ToolResult::error(
+                    "Missing 'chat_id' parameter and no current chat is available".into(),
+                )
+            }
         };
         if let Err(e) = authorize_chat_access(&input, chat_id) {
             return ToolResult::error(e);

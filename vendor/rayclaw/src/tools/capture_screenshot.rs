@@ -33,7 +33,10 @@ impl CaptureScreenshotTool {
 
     fn resolve_output_path(&self, input: &serde_json::Value) -> PathBuf {
         let base_dir = self.screenshot_dir_for_input(input);
-        let provided = input.get("path").and_then(|v| v.as_str()).map(PathBuf::from);
+        let provided = input
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from);
         match provided {
             Some(path) if path.is_absolute() => path,
             Some(path) => base_dir.join(path),
@@ -91,6 +94,14 @@ impl CaptureScreenshotTool {
             r#"
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type @"
+using System.Runtime.InteropServices;
+public static class RayclawScreenshotNative {{
+    [DllImport("user32.dll")]
+    public static extern bool SetProcessDPIAware();
+}}
+"@
+[void][RayclawScreenshotNative]::SetProcessDPIAware()
 $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
 $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
@@ -98,6 +109,14 @@ $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bitmap.Size)
 $bitmap.Save('{escaped_path}', [System.Drawing.Imaging.ImageFormat]::Png)
 $graphics.Dispose()
 $bitmap.Dispose()
+[pscustomobject]@{{
+  path = '{escaped_path}'
+  origin_x = $bounds.Left
+  origin_y = $bounds.Top
+  width = $bounds.Width
+  height = $bounds.Height
+  scale = 1.0
+}} | ConvertTo-Json -Compress
 "#
         );
 
@@ -170,7 +189,7 @@ impl Tool for CaptureScreenshotTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "capture_screenshot".into(),
-            description: "Capture the current desktop as a PNG image and return the saved file path. Useful for taking a screenshot of the user's screen outside the browser tool.".into(),
+            description: "Capture the current desktop as a PNG image and return the saved file path plus screenshot coordinate metadata. Useful for taking a screenshot of the user's screen outside the browser tool and converting screenshot pixels back to screen coordinates.".into(),
             input_schema: schema_object(
                 json!({
                     "path": {
@@ -262,11 +281,25 @@ impl Tool for CaptureScreenshotTool {
                 }
 
                 match tokio::fs::metadata(&output_path).await {
-                    Ok(metadata) if metadata.len() > 0 => ToolResult::success(format!(
-                        "Saved desktop screenshot to {} ({} bytes)",
-                        output_path.display(),
-                        metadata.len()
-                    )),
+                    Ok(metadata) if metadata.len() > 0 => {
+                        #[cfg(target_os = "windows")]
+                        {
+                            if let Ok(mut value) =
+                                serde_json::from_str::<serde_json::Value>(stdout.trim())
+                            {
+                                if let Some(obj) = value.as_object_mut() {
+                                    obj.insert("bytes".to_string(), json!(metadata.len()));
+                                }
+                                return ToolResult::success(value.to_string());
+                            }
+                        }
+
+                        ToolResult::success(format!(
+                            "Saved desktop screenshot to {} ({} bytes)",
+                            output_path.display(),
+                            metadata.len()
+                        ))
+                    }
                     Ok(_) => ToolResult::error(format!(
                         "Screenshot command completed but produced an empty file at {}",
                         output_path.display()

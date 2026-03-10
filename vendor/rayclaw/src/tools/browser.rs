@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use serde_json::json;
 use tracing::info;
 
+use super::{auth_context_from_input, schema_object, Tool, ToolResult};
 use crate::llm_types::ToolDefinition;
 use crate::text::floor_char_boundary;
-use super::{auth_context_from_input, schema_object, Tool, ToolResult};
 
 pub struct BrowserTool {
     data_dir: PathBuf,
@@ -27,21 +27,8 @@ fn default_timeout_secs_for_command(command: &str, source: &str) -> u64 {
     let base = match browser_command_verb(command) {
         Some("open" | "reload" | "wait" | "screenshot" | "pdf" | "tab") => 120,
         Some(
-            "click"
-            | "dblclick"
-            | "fill"
-            | "type"
-            | "press"
-            | "hover"
-            | "select"
-            | "check"
-            | "uncheck"
-            | "upload"
-            | "drag"
-            | "scroll"
-            | "scrollintoview"
-            | "find"
-            | "eval",
+            "click" | "dblclick" | "fill" | "type" | "press" | "hover" | "select" | "check"
+            | "uncheck" | "upload" | "drag" | "scroll" | "scrollintoview" | "find" | "eval",
         ) => 60,
         Some(_) | None => 60,
     };
@@ -265,7 +252,10 @@ impl BrowserTool {
             }
 
             if let Ok(home) = std::env::var("HOME") {
-                let local_bin = PathBuf::from(home).join(".local").join("bin").join("agent-browser");
+                let local_bin = PathBuf::from(home)
+                    .join(".local")
+                    .join("bin")
+                    .join("agent-browser");
                 if local_bin.is_file() {
                     out.push(BrowserCommandSpec {
                         program: local_bin.to_string_lossy().to_string(),
@@ -347,9 +337,7 @@ impl Tool for BrowserTool {
             None => return ToolResult::error("Missing 'command' parameter".into()),
         };
 
-        let requested_timeout_secs = input
-            .get("timeout_secs")
-            .and_then(|v| v.as_u64());
+        let requested_timeout_secs = input.get("timeout_secs").and_then(|v| v.as_u64());
 
         let auth = auth_context_from_input(&input);
 
@@ -396,46 +384,44 @@ impl Tool for BrowserTool {
             let effective_timeout_secs = requested_timeout_secs
                 .unwrap_or_else(|| default_timeout_secs_for_command(command, candidate.source));
 
-            let result = tokio::time::timeout(
-                std::time::Duration::from_secs(effective_timeout_secs),
-                {
+            let result =
+                tokio::time::timeout(std::time::Duration::from_secs(effective_timeout_secs), {
                     let mut cmd = tokio::process::Command::new(&candidate.program);
                     cmd.kill_on_drop(true)
                         .args(&candidate.args)
                         .envs(candidate.env.iter().cloned())
                         .args(&args);
                     cmd.output()
-                },
-            )
-            .await;
+                })
+                .await;
 
             match result {
                 Ok(Ok(output)) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let exit_code = output.status.code().unwrap_or(-1);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let exit_code = output.status.code().unwrap_or(-1);
 
-                let mut result_text = String::new();
-                if !stdout.is_empty() {
-                    result_text.push_str(&stdout);
-                }
-                if !stderr.is_empty() {
-                    if !result_text.is_empty() {
-                        result_text.push('\n');
+                    let mut result_text = String::new();
+                    if !stdout.is_empty() {
+                        result_text.push_str(&stdout);
                     }
-                    result_text.push_str("STDERR:\n");
-                    result_text.push_str(&stderr);
-                }
-                if result_text.is_empty() {
-                    result_text = format!("Command completed with exit code {exit_code}");
-                }
+                    if !stderr.is_empty() {
+                        if !result_text.is_empty() {
+                            result_text.push('\n');
+                        }
+                        result_text.push_str("STDERR:\n");
+                        result_text.push_str(&stderr);
+                    }
+                    if result_text.is_empty() {
+                        result_text = format!("Command completed with exit code {exit_code}");
+                    }
 
-                // Truncate very long output
-                if result_text.len() > 30000 {
-                    let cutoff = floor_char_boundary(&result_text, 30000);
-                    result_text.truncate(cutoff);
-                    result_text.push_str("\n... (output truncated)");
-                }
+                    // Truncate very long output
+                    if result_text.len() > 30000 {
+                        let cutoff = floor_char_boundary(&result_text, 30000);
+                        result_text.truncate(cutoff);
+                        result_text.push_str("\n... (output truncated)");
+                    }
 
                     if exit_code == 0 {
                         return ToolResult::success(result_text).with_status_code(exit_code);
@@ -531,9 +517,15 @@ mod tests {
 
     #[test]
     fn test_default_timeout_secs_for_command() {
-        assert_eq!(default_timeout_secs_for_command("open https://example.com", "PATH"), 120);
+        assert_eq!(
+            default_timeout_secs_for_command("open https://example.com", "PATH"),
+            120
+        );
         assert_eq!(default_timeout_secs_for_command("click @e1", "PATH"), 60);
-        assert_eq!(default_timeout_secs_for_command("snapshot -i", "bundled-app"), 120);
+        assert_eq!(
+            default_timeout_secs_for_command("snapshot -i", "bundled-app"),
+            120
+        );
     }
 
     #[tokio::test]

@@ -4,6 +4,7 @@ pub mod bash;
 pub mod browser;
 pub mod capture_screenshot;
 pub mod command_runner;
+pub mod desktop;
 pub mod edit_file;
 pub mod export_chat;
 pub mod glob;
@@ -104,6 +105,11 @@ pub fn tool_risk(name: &str) -> ToolRisk {
         | "write_memory"
         | "send_message"
         | "capture_screenshot"
+        | "click"
+        | "type_text"
+        | "press_key"
+        | "scroll"
+        | "focus_window"
         | "sync_skills"
         | "schedule_task"
         | "pause_scheduled_task"
@@ -309,6 +315,13 @@ impl ToolRegistry {
             Box::new(capture_screenshot::CaptureScreenshotTool::new(
                 &config.data_dir,
             )),
+            Box::new(desktop::ListWindowsTool),
+            Box::new(desktop::FocusWindowTool),
+            Box::new(desktop::ClickTool),
+            Box::new(desktop::TypeTextTool),
+            Box::new(desktop::PressKeyTool),
+            Box::new(desktop::ScrollTool),
+            Box::new(desktop::FindTextTool),
             Box::new(read_file::ReadFileTool::new_with_isolation(
                 &config.working_dir,
                 config.working_dir_isolation,
@@ -411,6 +424,13 @@ impl ToolRegistry {
             Box::new(capture_screenshot::CaptureScreenshotTool::new(
                 &config.data_dir,
             )),
+            Box::new(desktop::ListWindowsTool),
+            Box::new(desktop::FocusWindowTool),
+            Box::new(desktop::ClickTool),
+            Box::new(desktop::TypeTextTool),
+            Box::new(desktop::PressKeyTool),
+            Box::new(desktop::ScrollTool),
+            Box::new(desktop::FindTextTool),
             Box::new(read_file::ReadFileTool::new_with_isolation(
                 &config.working_dir,
                 config.working_dir_isolation,
@@ -481,6 +501,13 @@ impl ToolRegistry {
             Box::new(capture_screenshot::CaptureScreenshotTool::new(
                 &config.data_dir,
             )),
+            Box::new(desktop::ListWindowsTool),
+            Box::new(desktop::FocusWindowTool),
+            Box::new(desktop::ClickTool),
+            Box::new(desktop::TypeTextTool),
+            Box::new(desktop::PressKeyTool),
+            Box::new(desktop::ScrollTool),
+            Box::new(desktop::FindTextTool),
             Box::new(read_file::ReadFileTool::new_with_isolation(
                 &config.working_dir,
                 config.working_dir_isolation,

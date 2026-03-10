@@ -206,8 +206,8 @@ pub(crate) fn try_load_config_for_desktop() -> Result<Option<rayclaw::config::Co
     let path_str = path.to_string_lossy().to_string();
     let content =
         std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {path_str}: {e}"))?;
-    let config = serde_yaml::from_str(&content)
-        .map_err(|e| format!("Failed to parse {path_str}: {e}"))?;
+    let config =
+        serde_yaml::from_str(&content).map_err(|e| format!("Failed to parse {path_str}: {e}"))?;
     Ok(Some(config))
 }
 
@@ -329,7 +329,10 @@ pub async fn get_config(_app: tauri::AppHandle) -> Result<ConfigDto, String> {
         show_thinking: config.show_thinking,
         aws_region: config.aws_region.clone(),
         aws_access_key_id: config.aws_access_key_id.as_ref().map(|s| mask_secret(s)),
-        aws_secret_access_key: config.aws_secret_access_key.as_ref().map(|s| mask_secret(s)),
+        aws_secret_access_key: config
+            .aws_secret_access_key
+            .as_ref()
+            .map(|s| mask_secret(s)),
         aws_profile: config.aws_profile.clone(),
         max_tool_iterations: config.max_tool_iterations,
         max_history_messages: config.max_history_messages,
@@ -421,11 +424,26 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
     }
 
     // Channels — Slack
-    apply_channel_secret(&mut full_config.channels, "slack", "bot_token", config.slack_bot_token);
-    apply_channel_secret(&mut full_config.channels, "slack", "app_token", config.slack_app_token);
+    apply_channel_secret(
+        &mut full_config.channels,
+        "slack",
+        "bot_token",
+        config.slack_bot_token,
+    );
+    apply_channel_secret(
+        &mut full_config.channels,
+        "slack",
+        "app_token",
+        config.slack_app_token,
+    );
 
     // Channels — Feishu
-    apply_channel_field(&mut full_config.channels, "feishu", "app_id", config.feishu_app_id);
+    apply_channel_field(
+        &mut full_config.channels,
+        "feishu",
+        "app_id",
+        config.feishu_app_id,
+    );
     apply_channel_secret(
         &mut full_config.channels,
         "feishu",
@@ -524,10 +542,7 @@ pub async fn get_channel_status(app: tauri::AppHandle) -> Result<Vec<ChannelStat
     let enabled_map = desktop.channel_enabled.lock().unwrap();
 
     let channels = vec![
-        (
-            "telegram",
-            !config.telegram_bot_token.trim().is_empty(),
-        ),
+        ("telegram", !config.telegram_bot_token.trim().is_empty()),
         (
             "discord",
             config
@@ -552,10 +567,7 @@ pub async fn get_channel_status(app: tauri::AppHandle) -> Result<Vec<ChannelStat
         .into_iter()
         .map(|(name, configured)| {
             let enabled = enabled_map.get(name).copied().unwrap_or(true);
-            let running = handles
-                .get(name)
-                .map(|h| !h.is_finished())
-                .unwrap_or(false);
+            let running = handles.get(name).map(|h| !h.is_finished()).unwrap_or(false);
             ChannelStatusDto {
                 name: name.to_string(),
                 configured,
@@ -623,7 +635,7 @@ pub struct AttachmentDto {
     pub data: String,       // base64-encoded file data
     pub media_type: String, // e.g. "image/png"
     #[allow(dead_code)]
-    pub name: String,       // original filename (used by frontend)
+    pub name: String, // original filename (used by frontend)
 }
 
 #[tauri::command]
@@ -655,10 +667,13 @@ pub async fn send_message(
             while let Some(event) = rx.recv().await {
                 let cid = emit_chat_id;
                 let payload = match event {
-                    AgentEvent::Iteration { iteration } => {
-                        AgentStreamPayload::Iteration { chat_id: cid, iteration }
+                    AgentEvent::Iteration { iteration } => AgentStreamPayload::Iteration {
+                        chat_id: cid,
+                        iteration,
+                    },
+                    AgentEvent::ToolStart { name } => {
+                        AgentStreamPayload::ToolStart { chat_id: cid, name }
                     }
-                    AgentEvent::ToolStart { name } => AgentStreamPayload::ToolStart { chat_id: cid, name },
                     AgentEvent::ToolResult {
                         name,
                         is_error,
@@ -672,7 +687,10 @@ pub async fn send_message(
                         preview,
                         duration_ms: duration_ms as u64,
                     },
-                    AgentEvent::TextDelta { delta } => AgentStreamPayload::TextDelta { chat_id: cid, delta },
+                    AgentEvent::TextDelta { delta } => AgentStreamPayload::TextDelta {
+                        chat_id: cid,
+                        delta,
+                    },
                     AgentEvent::FinalResponse { text } => {
                         AgentStreamPayload::FinalResponse { chat_id: cid, text }
                     }
@@ -728,10 +746,13 @@ pub async fn send_message(
             }
             Err(e) => {
                 error!("send_message: agent error: {e}");
-                let _ = app_handle.emit("agent-stream", &AgentStreamPayload::Error {
-                    chat_id,
-                    message: e.to_string(),
-                });
+                let _ = app_handle.emit(
+                    "agent-stream",
+                    &AgentStreamPayload::Error {
+                        chat_id,
+                        message: e.to_string(),
+                    },
+                );
             }
         }
 
@@ -789,7 +810,11 @@ pub async fn get_chats(app: tauri::AppHandle) -> Result<Vec<ChatSummaryDto>, Str
 pub async fn reset_session(app: tauri::AppHandle, chat_id: i64) -> Result<(), String> {
     let desktop = app.state::<DesktopState>();
     let state = require_state(&desktop).await?;
-    state.db.delete_session(chat_id).map(|_| ()).map_err(|e| e.to_string())
+    state
+        .db
+        .delete_session(chat_id)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -808,10 +833,7 @@ pub async fn delete_chat(app: tauri::AppHandle, chat_id: i64) -> Result<(), Stri
 }
 
 #[tauri::command]
-pub async fn export_chat_markdown(
-    app: tauri::AppHandle,
-    chat_id: i64,
-) -> Result<String, String> {
+pub async fn export_chat_markdown(app: tauri::AppHandle, chat_id: i64) -> Result<String, String> {
     let desktop = app.state::<DesktopState>();
     let state = require_state(&desktop).await?;
 
@@ -831,7 +853,11 @@ pub async fn export_chat_markdown(
     // Format as Markdown
     let mut md = format!("# {title}\n\n");
     for msg in &messages {
-        let role = if msg.is_from_bot { "**Assistant**" } else { &format!("**{}**", msg.sender_name) };
+        let role = if msg.is_from_bot {
+            "**Assistant**"
+        } else {
+            &format!("**{}**", msg.sender_name)
+        };
         let ts = &msg.timestamp;
         md.push_str(&format!("### {role} — {ts}\n\n{}\n\n---\n\n", msg.content));
     }
@@ -840,11 +866,7 @@ pub async fn export_chat_markdown(
 }
 
 #[tauri::command]
-pub async fn rename_chat(
-    app: tauri::AppHandle,
-    chat_id: i64,
-    title: String,
-) -> Result<(), String> {
+pub async fn rename_chat(app: tauri::AppHandle, chat_id: i64, title: String) -> Result<(), String> {
     let desktop = app.state::<DesktopState>();
     let state = require_state(&desktop).await?;
     info!("rename_chat: chat_id={chat_id}, title={title}");
@@ -879,10 +901,7 @@ fn soul_path(state: &AppState, chat_id: Option<i64>) -> std::path::PathBuf {
 }
 
 #[tauri::command]
-pub async fn read_soul(
-    app: tauri::AppHandle,
-    chat_id: Option<i64>,
-) -> Result<SoulDto, String> {
+pub async fn read_soul(app: tauri::AppHandle, chat_id: Option<i64>) -> Result<SoulDto, String> {
     let desktop = app.state::<DesktopState>();
     let state = require_state(&desktop).await?;
     let path = soul_path(&state, chat_id);
@@ -920,9 +939,12 @@ pub async fn save_soul(
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create directory: {e}"))?;
         }
-        std::fs::write(&path, &content)
-            .map_err(|e| format!("Failed to write SOUL.md: {e}"))?;
-        info!("save_soul: wrote {} bytes to {}", content.len(), path.display());
+        std::fs::write(&path, &content).map_err(|e| format!("Failed to write SOUL.md: {e}"))?;
+        info!(
+            "save_soul: wrote {} bytes to {}",
+            content.len(),
+            path.display()
+        );
     }
     Ok(())
 }
@@ -976,13 +998,15 @@ pub async fn get_skill(app: tauri::AppHandle, name: String) -> Result<SkillDetai
     let desktop = app.state::<DesktopState>();
     let state = require_state(&desktop).await?;
     let all = state.skills.discover_all_skills();
-    let info = all.into_iter().find(|i| i.metadata.name == name)
+    let info = all
+        .into_iter()
+        .find(|i| i.metadata.name == name)
         .ok_or_else(|| format!("Skill '{name}' not found"))?;
 
     // Read the SKILL.md body
     let skill_md = info.metadata.dir_path.join("SKILL.md");
-    let raw = std::fs::read_to_string(&skill_md)
-        .map_err(|e| format!("Failed to read SKILL.md: {e}"))?;
+    let raw =
+        std::fs::read_to_string(&skill_md).map_err(|e| format!("Failed to read SKILL.md: {e}"))?;
 
     // Extract body after frontmatter
     let body = extract_skill_body(&raw);
@@ -1017,7 +1041,11 @@ pub async fn save_skill(
     let skills_dir = state.skills.skills_dir();
 
     // Validate name: alphanumeric, hyphens, underscores only
-    if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
         return Err("Skill name must be non-empty and contain only letters, digits, hyphens, or underscores.".into());
     }
 
@@ -1028,7 +1056,10 @@ pub async fn save_skill(
     // Build SKILL.md with YAML frontmatter
     let mut md = String::from("---\n");
     md.push_str(&format!("name: {name}\n"));
-    md.push_str(&format!("description: \"{}\"\n", description.replace('"', "\\\"")));
+    md.push_str(&format!(
+        "description: \"{}\"\n",
+        description.replace('"', "\\\"")
+    ));
     if !platforms.is_empty() {
         md.push_str(&format!("platforms: [{}]\n", platforms.join(", ")));
     }
@@ -1040,8 +1071,7 @@ pub async fn save_skill(
     md.push_str(&content);
 
     let skill_path = skill_dir.join("SKILL.md");
-    std::fs::write(&skill_path, &md)
-        .map_err(|e| format!("Failed to write SKILL.md: {e}"))?;
+    std::fs::write(&skill_path, &md).map_err(|e| format!("Failed to write SKILL.md: {e}"))?;
 
     info!("save_skill: wrote {}", skill_path.display());
     Ok(())
@@ -1065,8 +1095,7 @@ pub async fn delete_skill(app: tauri::AppHandle, name: String) -> Result<(), Str
         return Err("Path traversal not allowed".into());
     }
 
-    std::fs::remove_dir_all(&skill_dir)
-        .map_err(|e| format!("Failed to delete skill: {e}"))?;
+    std::fs::remove_dir_all(&skill_dir).map_err(|e| format!("Failed to delete skill: {e}"))?;
 
     info!("delete_skill: removed {}", skill_dir.display());
     Ok(())
@@ -1347,10 +1376,7 @@ pub async fn update_task_status(
 }
 
 #[tauri::command]
-pub async fn delete_scheduled_task(
-    app: tauri::AppHandle,
-    task_id: i64,
-) -> Result<bool, String> {
+pub async fn delete_scheduled_task(app: tauri::AppHandle, task_id: i64) -> Result<bool, String> {
     let desktop = app.state::<DesktopState>();
     let state = require_state(&desktop).await?;
     state.db.delete_task(task_id).map_err(|e| e.to_string())

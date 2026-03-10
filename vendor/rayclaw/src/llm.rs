@@ -613,7 +613,10 @@ fn build_stream_response(
         }
         if let Some(tool) = tool_blocks.get(&index) {
             if tool.name.trim().is_empty() {
-                warn!("Dropping streamed tool call with empty name (id={})", tool.id);
+                warn!(
+                    "Dropping streamed tool call with empty name (id={})",
+                    tool.id
+                );
             } else {
                 content.push(ResponseContentBlock::ToolUse {
                     id: tool.id.clone(),
