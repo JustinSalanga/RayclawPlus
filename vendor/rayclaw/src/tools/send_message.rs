@@ -36,6 +36,7 @@ impl SendMessageTool {
             content,
             is_from_bot: true,
             timestamp: chrono::Utc::now().to_rfc3339(),
+            attachment_paths: None,
         };
         call_blocking(self.db.clone(), move |db| db.store_message(&msg))
             .await

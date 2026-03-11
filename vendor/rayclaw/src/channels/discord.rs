@@ -329,6 +329,7 @@ impl EventHandler for Handler {
             content: text.clone(),
             is_from_bot: false,
             timestamp: chrono::Utc::now().to_rfc3339(),
+            attachment_paths: None,
         };
         let _ = call_blocking(self.app_state.db.clone(), move |db| {
             db.store_message(&stored)
@@ -402,6 +403,7 @@ impl EventHandler for Handler {
                         content: response,
                         is_from_bot: true,
                         timestamp: chrono::Utc::now().to_rfc3339(),
+                        attachment_paths: None,
                     };
                     let _ = call_blocking(self.app_state.db.clone(), move |db| {
                         db.store_message(&bot_msg)
@@ -418,6 +420,7 @@ impl EventHandler for Handler {
                         content: fallback,
                         is_from_bot: true,
                         timestamp: chrono::Utc::now().to_rfc3339(),
+                        attachment_paths: None,
                     };
                     let _ = call_blocking(self.app_state.db.clone(), move |db| {
                         db.store_message(&bot_msg)

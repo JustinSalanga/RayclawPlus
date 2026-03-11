@@ -481,6 +481,7 @@ async fn handle_slack_message(
         content: text.to_string(),
         is_from_bot: false,
         timestamp: chrono::Utc::now().to_rfc3339(),
+        attachment_paths: None,
     };
     let _ = call_blocking(app_state.db.clone(), move |db| db.store_message(&stored)).await;
 
@@ -595,6 +596,7 @@ async fn handle_slack_message(
                     content: response,
                     is_from_bot: true,
                     timestamp: chrono::Utc::now().to_rfc3339(),
+                    attachment_paths: None,
                 };
                 let _ =
                     call_blocking(app_state.db.clone(), move |db| db.store_message(&bot_msg)).await;
@@ -609,6 +611,7 @@ async fn handle_slack_message(
                     content: fallback.to_string(),
                     is_from_bot: true,
                     timestamp: chrono::Utc::now().to_rfc3339(),
+                    attachment_paths: None,
                 };
                 let _ =
                     call_blocking(app_state.db.clone(), move |db| db.store_message(&bot_msg)).await;

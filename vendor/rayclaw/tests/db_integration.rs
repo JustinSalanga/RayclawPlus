@@ -29,6 +29,7 @@ fn test_message_full_lifecycle() {
             content: format!("chat1 message {i}"),
             is_from_bot: false,
             timestamp: format!("2024-01-01T00:00:{:02}Z", i),
+            attachment_paths: None,
         })
         .unwrap();
     }
@@ -40,6 +41,7 @@ fn test_message_full_lifecycle() {
             content: format!("chat2 message {i}"),
             is_from_bot: false,
             timestamp: format!("2024-01-01T00:00:{:02}Z", i),
+            attachment_paths: None,
         })
         .unwrap();
     }
@@ -264,6 +266,7 @@ fn test_catch_up_query_complex() {
             content: content.to_string(),
             is_from_bot: *is_bot,
             timestamp: ts.to_string(),
+            attachment_paths: None,
         })
         .unwrap();
     }
@@ -300,6 +303,7 @@ fn test_new_user_messages_since() {
             content: content.to_string(),
             is_from_bot: *is_bot,
             timestamp: ts.to_string(),
+            attachment_paths: None,
         })
         .unwrap();
     }
@@ -331,6 +335,7 @@ fn test_chat_and_messages_together() {
         content: "hello".into(),
         is_from_bot: false,
         timestamp: "2024-01-01T00:00:00Z".into(),
+        attachment_paths: None,
     })
     .unwrap();
 

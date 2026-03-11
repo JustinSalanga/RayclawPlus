@@ -25,16 +25,16 @@ fn browser_command_verb(command: &str) -> Option<&str> {
 
 fn default_timeout_secs_for_command(command: &str, source: &str) -> u64 {
     let base = match browser_command_verb(command) {
-        Some("open" | "reload" | "wait" | "screenshot" | "pdf" | "tab") => 120,
+        Some("open" | "reload" | "wait" | "screenshot" | "pdf" | "tab") => 360,
         Some(
             "click" | "dblclick" | "fill" | "type" | "press" | "hover" | "select" | "check"
             | "uncheck" | "upload" | "drag" | "scroll" | "scrollintoview" | "find" | "eval",
-        ) => 60,
-        Some(_) | None => 60,
+        ) => 180,
+        Some(_) | None => 180,
     };
 
     if matches!(source, "bundled-app" | "npx") {
-        base.max(120)
+        base.max(360)
     } else {
         base
     }
@@ -108,6 +108,15 @@ impl BrowserTool {
             .join("browser-profile")
     }
 
+    fn screenshot_path(&self, chat_id: i64, name: &str) -> PathBuf {
+        let ts = chrono::Local::now().format("%Y%m%d_%H%M%S_%3f");
+        let safe_name = if name.is_empty() { "screenshot" } else { name };
+        self.data_dir
+            .join(chat_id.to_string())
+            .join("screenshots")
+            .join(format!("{safe_name}_{ts}.png"))
+    }
+
     fn session_name_for_chat(chat_id: i64) -> String {
         let normalized = if chat_id < 0 {
             format!("neg{}", chat_id.unsigned_abs())
@@ -156,6 +165,24 @@ impl BrowserTool {
         false
     }
 
+    fn base_env() -> Vec<(String, String)> {
+        // Force headless mode for the bundled agent-browser daemon unless the
+        // user has explicitly overridden it. The agent-browser docs specify
+        // that `AGENT_BROWSER_HEADED=1` enables headed mode; anything else is
+        // treated as disabled. We set it to "0" so that even if a config file
+        // requests headed mode, the environment keeps the daemon headless.
+        let mut env = Vec::new();
+        if std::env::var("AGENT_BROWSER_HEADED").is_err() {
+            env.push(("AGENT_BROWSER_HEADED".to_string(), "0".to_string()));
+        }
+        if let Ok(browsers_path) = std::env::var("PLAYWRIGHT_BROWSERS_PATH") {
+            if !browsers_path.trim().is_empty() {
+                env.push(("PLAYWRIGHT_BROWSERS_PATH".to_string(), browsers_path));
+            }
+        }
+        env
+    }
+
     fn browser_command_candidates() -> Vec<BrowserCommandSpec> {
         let mut out = Vec::new();
 
@@ -166,17 +193,10 @@ impl BrowserTool {
             let node_path = PathBuf::from(&node);
             let entry_path = PathBuf::from(&entry);
             if node_path.is_file() && entry_path.is_file() {
-                let mut env = Vec::new();
-                if let Ok(browsers_path) = std::env::var("PLAYWRIGHT_BROWSERS_PATH") {
-                    if !browsers_path.trim().is_empty() {
-                        env.push(("PLAYWRIGHT_BROWSERS_PATH".to_string(), browsers_path));
-                    }
-                }
-
                 out.push(BrowserCommandSpec {
                     program: node,
                     args: vec![entry],
-                    env,
+                    env: Self::base_env(),
                     source: "bundled-app",
                 });
             }
@@ -188,7 +208,7 @@ impl BrowserTool {
                 out.push(BrowserCommandSpec {
                     program: "agent-browser.cmd".to_string(),
                     args: Vec::new(),
-                    env: Vec::new(),
+                    env: Self::base_env(),
                     source: "PATH",
                 });
             }
@@ -198,7 +218,7 @@ impl BrowserTool {
                     out.push(BrowserCommandSpec {
                         program: path.to_string_lossy().to_string(),
                         args: Vec::new(),
-                        env: Vec::new(),
+                        env: Self::base_env(),
                         source,
                     });
                 }
@@ -234,7 +254,7 @@ impl BrowserTool {
                 out.push(BrowserCommandSpec {
                     program: "npx.cmd".to_string(),
                     args: vec!["--yes".to_string(), "agent-browser".to_string()],
-                    env: Vec::new(),
+                    env: Self::base_env(),
                     source: "npx",
                 });
             }
@@ -246,7 +266,7 @@ impl BrowserTool {
                 out.push(BrowserCommandSpec {
                     program: "agent-browser".to_string(),
                     args: Vec::new(),
-                    env: Vec::new(),
+                    env: Self::base_env(),
                     source: "PATH",
                 });
             }
@@ -260,7 +280,7 @@ impl BrowserTool {
                     out.push(BrowserCommandSpec {
                         program: local_bin.to_string_lossy().to_string(),
                         args: Vec::new(),
-                        env: Vec::new(),
+                        env: Self::base_env(),
                         source: "~/.local/bin",
                     });
                 }
@@ -270,13 +290,63 @@ impl BrowserTool {
                 out.push(BrowserCommandSpec {
                     program: "npx".to_string(),
                     args: vec!["--yes".to_string(), "agent-browser".to_string()],
-                    env: Vec::new(),
+                    env: Self::base_env(),
                     source: "npx",
                 });
             }
         }
 
         out
+    }
+
+    /// Close the browser daemon for a given chat session. Called before and
+    /// after an agent turn so the Chromium process doesn't linger and new
+    /// options like profile/headed take effect.
+    pub async fn close_session(chat_id: i64) {
+        let session_name = Self::session_name_for_chat(chat_id);
+        let candidates = Self::browser_command_candidates();
+        for candidate in candidates {
+            // Try to close just this session first.
+            for args in [
+                vec!["--session".to_string(), session_name.clone(), "close".to_string()],
+                // Then fall back to a global close without an explicit session
+                // in case the daemon was started with a different session name.
+                vec!["close".to_string()],
+            ] {
+                let mut cmd = tokio::process::Command::new(&candidate.program);
+                cmd.args(&candidate.args)
+                    .envs(candidate.env.iter().cloned())
+                    .args(&args)
+                    .kill_on_drop(true);
+                match tokio::time::timeout(std::time::Duration::from_secs(10), cmd.output()).await
+                {
+                    Ok(Ok(output)) => {
+                        info!(
+                            "browser close_session(chat_id={chat_id}) via {} {:?}: exit={:?}",
+                            candidate.source,
+                            args,
+                            output.status.code()
+                        );
+                        // If we got any response at all, stop trying further candidates.
+                        return;
+                    }
+                    Ok(Err(e)) => {
+                        info!(
+                            "browser close_session error via {} {:?}: {e}",
+                            candidate.source, args
+                        );
+                        continue;
+                    }
+                    Err(_) => {
+                        info!(
+                            "browser close_session timed out via {} {:?}",
+                            candidate.source, args
+                        );
+                        return;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -322,9 +392,9 @@ impl Tool for BrowserTool {
                         "description": "The agent-browser command to run (e.g. `open https://example.com`, `snapshot -i`, `fill @e2 \"hello\"`)"
                     },
                     "timeout_secs": {
-                        "type": "integer",
+                        "type": "number",
                         "description": "Timeout in seconds. Optional; if omitted, the tool uses a longer command-aware default."
-                    }
+                    },
                 }),
                 &["command"],
             ),
@@ -346,14 +416,17 @@ impl Tool for BrowserTool {
             .map(|auth| Self::session_name_for_chat(auth.caller_chat_id))
             .unwrap_or_else(|| "rayclaw".to_string());
 
-        let mut args = vec!["--session".to_string(), session_name];
+        let mut args = vec![
+            "--session".to_string(), session_name,
+            "--headed".to_string(), "false".to_string(),
+        ];
         if let Some(auth) = auth.as_ref() {
             let path = self.profile_path(auth.caller_chat_id);
             args.push("--profile".to_string());
             args.push(path.to_string_lossy().to_string());
         }
 
-        let command_args = match split_browser_command(command) {
+        let mut command_args = match split_browser_command(command) {
             Ok(parts) if !parts.is_empty() => parts,
             Ok(_) => return ToolResult::error("Empty browser command".into()),
             Err(e) => {
@@ -362,6 +435,23 @@ impl Tool for BrowserTool {
                 ));
             }
         };
+
+        // For screenshot commands without an explicit path, inject one into
+        // groups/{chat_id}/screenshots/ so images are saved consistently.
+        if let Some(auth_ctx) = auth.as_ref() {
+            let verb = command_args.first().map(|s| s.as_str());
+            if verb == Some("screenshot") {
+                let has_path = command_args.iter().skip(1).any(|a| !a.starts_with('-'));
+                if !has_path {
+                    let out = self.screenshot_path(auth_ctx.caller_chat_id, "browser_screenshot");
+                    if let Some(parent) = out.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    command_args.push(out.to_string_lossy().to_string());
+                }
+            }
+        }
+
         args.extend(command_args);
 
         let candidates = Self::browser_command_candidates();
@@ -384,44 +474,125 @@ impl Tool for BrowserTool {
             let effective_timeout_secs = requested_timeout_secs
                 .unwrap_or_else(|| default_timeout_secs_for_command(command, candidate.source));
 
-            let result =
-                tokio::time::timeout(std::time::Duration::from_secs(effective_timeout_secs), {
-                    let mut cmd = tokio::process::Command::new(&candidate.program);
-                    cmd.kill_on_drop(true)
-                        .args(&candidate.args)
-                        .envs(candidate.env.iter().cloned())
-                        .args(&args);
-                    cmd.output()
-                })
-                .await;
+            let mut cmd = tokio::process::Command::new(&candidate.program);
+            cmd.kill_on_drop(true)
+                .args(&candidate.args)
+                .envs(candidate.env.iter().cloned())
+                .args(&args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
 
-            match result {
-                Ok(Ok(output)) => {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let exit_code = output.status.code().unwrap_or(-1);
+            let mut child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    last_not_found_error = Some(format!(
+                        "{} ({}) not found: {}",
+                        candidate.program, candidate.source, e
+                    ));
+                    continue;
+                }
+                Err(e) => {
+                    return ToolResult::error(format!(
+                        "Failed to execute browser command via {} ({}): {e}",
+                        candidate.program, candidate.source
+                    ))
+                    .with_error_type("spawn_error");
+                }
+            };
 
-                    let mut result_text = String::new();
-                    if !stdout.is_empty() {
-                        result_text.push_str(&stdout);
-                    }
-                    if !stderr.is_empty() {
-                        if !result_text.is_empty() {
-                            result_text.push('\n');
-                        }
-                        result_text.push_str("STDERR:\n");
-                        result_text.push_str(&stderr);
-                    }
-                    if result_text.is_empty() {
-                        result_text = format!("Command completed with exit code {exit_code}");
-                    }
+            // Take stdout/stderr handles before wait so we can read them on timeout
+            let child_stdout = child.stdout.take();
+            let child_stderr = child.stderr.take();
 
-                    // Truncate very long output
-                    if result_text.len() > 30000 {
-                        let cutoff = floor_char_boundary(&result_text, 30000);
-                        result_text.truncate(cutoff);
-                        result_text.push_str("\n... (output truncated)");
+            let stdout_task = tokio::spawn(async move {
+                let mut buf = Vec::new();
+                if let Some(mut s) = child_stdout {
+                    let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut buf).await;
+                }
+                buf
+            });
+            let stderr_task = tokio::spawn(async move {
+                let mut buf = Vec::new();
+                if let Some(mut s) = child_stderr {
+                    let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut buf).await;
+                }
+                buf
+            });
+
+            let wait_result = tokio::time::timeout(
+                std::time::Duration::from_secs(effective_timeout_secs),
+                child.wait(),
+            )
+            .await;
+
+            let timed_out = wait_result.is_err();
+            if timed_out {
+                let _ = child.kill().await;
+            }
+
+            let stdout_bytes = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                stdout_task,
+            )
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+
+            let stderr_bytes = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                stderr_task,
+            )
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+
+            let format_output = |stdout: &[u8], stderr: &[u8], fallback: &str| -> String {
+                let out = String::from_utf8_lossy(stdout);
+                let err = String::from_utf8_lossy(stderr);
+                let mut text = String::new();
+                if !out.is_empty() {
+                    text.push_str(&out);
+                }
+                if !err.is_empty() {
+                    if !text.is_empty() {
+                        text.push('\n');
                     }
+                    text.push_str("STDERR:\n");
+                    text.push_str(&err);
+                }
+                if text.is_empty() {
+                    text = fallback.to_string();
+                }
+                if text.len() > 30000 {
+                    let cutoff = floor_char_boundary(&text, 30000);
+                    text.truncate(cutoff);
+                    text.push_str("\n... (output truncated)");
+                }
+                text
+            };
+
+            if timed_out {
+                let partial = format_output(
+                    &stdout_bytes,
+                    &stderr_bytes,
+                    "(no output captured before timeout)",
+                );
+                return ToolResult::error(format!(
+                    "Browser command timed out after {effective_timeout_secs} seconds\n{partial}"
+                ))
+                .with_error_type("timeout");
+            }
+
+            match wait_result {
+                Ok(Ok(status)) => {
+                    let exit_code = status.code().unwrap_or(-1);
+                    let result_text = format_output(
+                        &stdout_bytes,
+                        &stderr_bytes,
+                        &format!("Command completed with exit code {exit_code}"),
+                    );
 
                     if exit_code == 0 {
                         return ToolResult::success(result_text).with_status_code(exit_code);
@@ -431,26 +602,19 @@ impl Tool for BrowserTool {
                             .with_error_type("process_exit");
                     }
                 }
-                Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                    last_not_found_error = Some(format!(
-                        "{} ({}) not found: {}",
-                        candidate.program, candidate.source, e
-                    ));
-                    continue;
-                }
                 Ok(Err(e)) => {
+                    let partial = format_output(
+                        &stdout_bytes,
+                        &stderr_bytes,
+                        "(no output captured)",
+                    );
                     return ToolResult::error(format!(
-                        "Failed to execute browser command via {} ({}): {e}",
+                        "Failed to wait on browser command via {} ({}): {e}\n{partial}",
                         candidate.program, candidate.source
                     ))
                     .with_error_type("spawn_error");
                 }
-                Err(_) => {
-                    return ToolResult::error(format!(
-                        "Browser command timed out after {effective_timeout_secs} seconds"
-                    ))
-                    .with_error_type("timeout");
-                }
+                Err(_) => unreachable!(),
             }
         }
 
@@ -519,12 +683,12 @@ mod tests {
     fn test_default_timeout_secs_for_command() {
         assert_eq!(
             default_timeout_secs_for_command("open https://example.com", "PATH"),
-            120
+            360
         );
-        assert_eq!(default_timeout_secs_for_command("click @e1", "PATH"), 60);
+        assert_eq!(default_timeout_secs_for_command("click @e1", "PATH"), 180);
         assert_eq!(
             default_timeout_secs_for_command("snapshot -i", "bundled-app"),
-            120
+            360
         );
     }
 

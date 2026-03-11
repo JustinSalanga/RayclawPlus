@@ -39,6 +39,8 @@ pub struct StoredMessage {
     pub content: String,
     pub is_from_bot: bool,
     pub timestamp: String,
+    /// JSON array of { path, name, media_type } for persisted attachment files.
+    pub attachment_paths: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -140,7 +142,7 @@ pub struct MemoryInjectionLog {
     pub tokens_est: i64,
 }
 
-const SCHEMA_VERSION_CURRENT: i64 = 4;
+const SCHEMA_VERSION_CURRENT: i64 = 5;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -385,6 +387,11 @@ fn apply_schema_migrations(conn: &Connection) -> Result<(), RayClawError> {
         )?;
         set_schema_version(conn, 4)?;
         version = 4;
+    }
+    if version < 5 {
+        conn.execute("ALTER TABLE messages ADD COLUMN attachment_paths TEXT", [])?;
+        set_schema_version(conn, 5)?;
+        version = 5;
     }
     if version != SCHEMA_VERSION_CURRENT {
         set_schema_version(conn, SCHEMA_VERSION_CURRENT)?;
@@ -667,8 +674,8 @@ impl Database {
     pub fn store_message(&self, msg: &StoredMessage) -> Result<(), RayClawError> {
         let conn = self.lock_conn();
         conn.execute(
-            "INSERT OR REPLACE INTO messages (id, chat_id, sender_name, content, is_from_bot, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT OR REPLACE INTO messages (id, chat_id, sender_name, content, is_from_bot, timestamp, attachment_paths)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 msg.id,
                 msg.chat_id,
@@ -676,6 +683,7 @@ impl Database {
                 msg.content,
                 msg.is_from_bot as i32,
                 msg.timestamp,
+                msg.attachment_paths.as_deref(),
             ],
         )?;
         Ok(())
@@ -688,7 +696,7 @@ impl Database {
     ) -> Result<Vec<StoredMessage>, RayClawError> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, chat_id, sender_name, content, is_from_bot, timestamp
+            "SELECT id, chat_id, sender_name, content, is_from_bot, timestamp, attachment_paths
              FROM messages
              WHERE chat_id = ?1
              ORDER BY timestamp DESC
@@ -704,6 +712,7 @@ impl Database {
                     content: row.get(3)?,
                     is_from_bot: row.get::<_, i32>(4)? != 0,
                     timestamp: row.get(5)?,
+                    attachment_paths: row.get(6).ok(),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -717,7 +726,7 @@ impl Database {
     pub fn get_all_messages(&self, chat_id: i64) -> Result<Vec<StoredMessage>, RayClawError> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, chat_id, sender_name, content, is_from_bot, timestamp
+            "SELECT id, chat_id, sender_name, content, is_from_bot, timestamp, attachment_paths
              FROM messages
              WHERE chat_id = ?1
              ORDER BY timestamp ASC",
@@ -731,6 +740,7 @@ impl Database {
                     content: row.get(3)?,
                     is_from_bot: row.get::<_, i32>(4)? != 0,
                     timestamp: row.get(5)?,
+                    attachment_paths: row.get(6).ok(),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -859,7 +869,7 @@ impl Database {
 
         let mut messages = if let Some(ts) = last_bot_ts {
             let mut stmt = conn.prepare(
-                "SELECT id, chat_id, sender_name, content, is_from_bot, timestamp
+                "SELECT id, chat_id, sender_name, content, is_from_bot, timestamp, attachment_paths
                  FROM messages
                  WHERE chat_id = ?1 AND timestamp >= ?2
                  ORDER BY timestamp DESC
@@ -874,13 +884,14 @@ impl Database {
                         content: row.get(3)?,
                         is_from_bot: row.get::<_, i32>(4)? != 0,
                         timestamp: row.get(5)?,
+                        attachment_paths: row.get(6).ok(),
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
             rows
         } else {
             let mut stmt = conn.prepare(
-                "SELECT id, chat_id, sender_name, content, is_from_bot, timestamp
+                "SELECT id, chat_id, sender_name, content, is_from_bot, timestamp, attachment_paths
                  FROM messages
                  WHERE chat_id = ?1
                  ORDER BY timestamp DESC
@@ -895,6 +906,7 @@ impl Database {
                         content: row.get(3)?,
                         is_from_bot: row.get::<_, i32>(4)? != 0,
                         timestamp: row.get(5)?,
+                        attachment_paths: row.get(6).ok(),
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -1203,7 +1215,7 @@ impl Database {
     ) -> Result<Vec<StoredMessage>, RayClawError> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, chat_id, sender_name, content, is_from_bot, timestamp
+            "SELECT id, chat_id, sender_name, content, is_from_bot, timestamp, attachment_paths
              FROM messages
              WHERE chat_id = ?1 AND timestamp > ?2 AND is_from_bot = 0
              ORDER BY timestamp ASC",
@@ -1217,6 +1229,7 @@ impl Database {
                     content: row.get(3)?,
                     is_from_bot: row.get::<_, i32>(4)? != 0,
                     timestamp: row.get(5)?,
+                    attachment_paths: row.get(6).ok(),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1231,7 +1244,7 @@ impl Database {
     ) -> Result<Vec<StoredMessage>, RayClawError> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT id, chat_id, sender_name, content, is_from_bot, timestamp
+            "SELECT id, chat_id, sender_name, content, is_from_bot, timestamp, attachment_paths
              FROM messages
              WHERE chat_id = ?1 AND timestamp > ?2
              ORDER BY timestamp ASC
@@ -1246,6 +1259,7 @@ impl Database {
                     content: row.get(3)?,
                     is_from_bot: row.get::<_, i32>(4)? != 0,
                     timestamp: row.get(5)?,
+                    attachment_paths: row.get(6).ok(),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -2491,6 +2505,7 @@ mod tests {
             content: "hello".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:00Z".into(),
+            attachment_paths: None,
         };
         db.store_message(&msg).unwrap();
 
@@ -2513,6 +2528,7 @@ mod tests {
             content: "original".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:00Z".into(),
+            attachment_paths: None,
         };
         db.store_message(&msg).unwrap();
 
@@ -2524,6 +2540,7 @@ mod tests {
             content: "updated".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:01Z".into(),
+            attachment_paths: None,
         };
         db.store_message(&msg2).unwrap();
 
@@ -2544,6 +2561,7 @@ mod tests {
                 content: format!("message {i}"),
                 is_from_bot: false,
                 timestamp: format!("2024-01-01T00:00:0{i}Z"),
+                attachment_paths: None,
             };
             db.store_message(&msg).unwrap();
         }
@@ -2573,6 +2591,7 @@ mod tests {
             content: "hi".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:01Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
 
@@ -2584,6 +2603,7 @@ mod tests {
             content: "hello!".into(),
             is_from_bot: true,
             timestamp: "2024-01-01T00:00:02Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
 
@@ -2595,6 +2615,7 @@ mod tests {
             content: "how are you?".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:03Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
 
@@ -2606,6 +2627,7 @@ mod tests {
             content: "me too".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:04Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
 
@@ -2633,6 +2655,7 @@ mod tests {
                 content: format!("msg {i}"),
                 is_from_bot: false,
                 timestamp: format!("2024-01-01T00:00:0{i}Z"),
+                attachment_paths: None,
             })
             .unwrap();
         }
@@ -2810,6 +2833,7 @@ mod tests {
                 content: format!("message {i}"),
                 is_from_bot: false,
                 timestamp: format!("2024-01-01T00:00:0{i}Z"),
+                attachment_paths: None,
             })
             .unwrap();
         }
@@ -2934,6 +2958,7 @@ mod tests {
             content: "hello".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:01Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
         db.insert_memory(Some(100), "User likes Rust", "PROFILE")
@@ -2960,6 +2985,7 @@ mod tests {
             content: "old msg".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:01Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
 
@@ -2971,6 +2997,7 @@ mod tests {
             content: "response".into(),
             is_from_bot: true,
             timestamp: "2024-01-01T00:00:02Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
 
@@ -2982,6 +3009,7 @@ mod tests {
             content: "new msg 1".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:03Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
 
@@ -2992,6 +3020,7 @@ mod tests {
             content: "new msg 2".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:04Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
 
@@ -3003,6 +3032,7 @@ mod tests {
             content: "bot again".into(),
             is_from_bot: true,
             timestamp: "2024-01-01T00:00:05Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
 
@@ -3026,6 +3056,7 @@ mod tests {
             content: "old".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:01Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
         db.store_message(&StoredMessage {
@@ -3035,6 +3066,7 @@ mod tests {
             content: "bot".into(),
             is_from_bot: true,
             timestamp: "2024-01-01T00:00:02Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
         db.store_message(&StoredMessage {
@@ -3044,6 +3076,7 @@ mod tests {
             content: "new".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:03Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
 
@@ -3395,6 +3428,7 @@ mod tests {
             content: "hello".into(),
             is_from_bot: false,
             timestamp: "2024-06-01T00:00:01Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
         db.store_message(&StoredMessage {
@@ -3404,6 +3438,7 @@ mod tests {
             content: "hi".into(),
             is_from_bot: false,
             timestamp: "2024-06-01T00:00:02Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
         // Bot message should not count
@@ -3414,6 +3449,7 @@ mod tests {
             content: "bot msg".into(),
             is_from_bot: true,
             timestamp: "2024-06-01T00:00:03Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
 

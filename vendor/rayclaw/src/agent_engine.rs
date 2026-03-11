@@ -841,16 +841,10 @@ pub(crate) async fn process_with_agent_impl(
                         );
                     }
                     if let Some(tx) = event_tx {
-                        let preview = if result.content.chars().count() > 160 {
-                            let clipped = result.content.chars().take(160).collect::<String>();
-                            format!("{clipped}...")
-                        } else {
-                            result.content.clone()
-                        };
                         let _ = tx.send(AgentEvent::ToolResult {
                             name: name.clone(),
                             is_error: result.is_error,
-                            preview,
+                            preview: result.content.clone(),
                             duration_ms: result
                                 .duration_ms
                                 .unwrap_or_else(|| started.elapsed().as_millis()),
@@ -1764,6 +1758,7 @@ mod tests {
             content: text.to_string(),
             is_from_bot: false,
             timestamp: chrono::Utc::now().to_rfc3339(),
+            attachment_paths: None,
         };
         db.store_message(&msg).unwrap();
     }

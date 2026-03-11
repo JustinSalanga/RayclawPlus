@@ -147,6 +147,7 @@ pub async fn deliver_and_store_bot_message(
         content: text.to_string(),
         is_from_bot: true,
         timestamp: chrono::Utc::now().to_rfc3339(),
+        attachment_paths: None,
     };
     call_blocking(db.clone(), move |d| d.store_message(&msg))
         .await

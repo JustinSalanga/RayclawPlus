@@ -58,11 +58,14 @@ export interface StoredMessage {
   content: string;
   is_from_bot: boolean;
   timestamp: string;
+  /** Resolved from attachment_paths when loading history (for display). */
   attachmentPreviews?: {
     name: string;
     type: string;
     dataUrl: string;
   }[];
+  /** Persisted paths from backend (get_history returns this as attachment_paths). */
+  attachment_paths?: { path: string; name: string; media_type: string }[];
 }
 
 export interface ChannelStatus {

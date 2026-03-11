@@ -32,4 +32,6 @@ pub struct DesktopState {
     pub channel_handles: std::sync::Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
     /// Per-channel enabled toggle — persisted across restarts.
     pub channel_enabled: std::sync::Mutex<ChannelEnabledMap>,
+    /// Current agent task per chat (aborted when user clicks Stop).
+    pub agent_handles: std::sync::Mutex<HashMap<i64, tokio::task::JoinHandle<()>>>,
 }

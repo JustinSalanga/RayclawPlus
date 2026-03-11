@@ -516,6 +516,7 @@ async fn handle_message(
             content: stored_content,
             is_from_bot: false,
             timestamp: chrono::Utc::now().to_rfc3339(),
+            attachment_paths: None,
         };
         let _ = call_blocking(state.db.clone(), move |db| db.store_message(&stored)).await;
         return Ok(());
@@ -568,6 +569,7 @@ async fn handle_message(
         content: stored_content,
         is_from_bot: false,
         timestamp: chrono::Utc::now().to_rfc3339(),
+        attachment_paths: None,
     };
     let _ = call_blocking(state.db.clone(), move |db| db.store_message(&stored)).await;
 
@@ -641,6 +643,7 @@ async fn handle_message(
                     content: response,
                     is_from_bot: true,
                     timestamp: chrono::Utc::now().to_rfc3339(),
+                    attachment_paths: None,
                 };
                 let _ = call_blocking(state.db.clone(), move |db| db.store_message(&bot_msg)).await;
             }
@@ -660,6 +663,7 @@ async fn handle_message(
                     content: fallback,
                     is_from_bot: true,
                     timestamp: chrono::Utc::now().to_rfc3339(),
+                    attachment_paths: None,
                 };
                 let _ = call_blocking(state.db.clone(), move |db| db.store_message(&bot_msg)).await;
             }
@@ -892,6 +896,7 @@ mod tests {
             content: content.into(),
             is_from_bot: is_bot,
             timestamp: ts.into(),
+            attachment_paths: None,
         }
     }
 

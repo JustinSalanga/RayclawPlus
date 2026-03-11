@@ -186,6 +186,7 @@ impl RayClawAgent {
             content: text.to_string(),
             is_from_bot: false,
             timestamp: chrono::Utc::now().to_rfc3339(),
+            attachment_paths: None,
         };
         let _ = self.state.db.store_message(&msg);
     }

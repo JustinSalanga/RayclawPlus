@@ -229,6 +229,14 @@ body {
   border-style: dashed;
 }
 
+.message-streaming-total-time {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+  font-size: 0.8125rem;
+  color: var(--text-muted, #666);
+}
+
 .message-content {
   font-size: 14px;
   line-height: 1.7;
@@ -392,6 +400,13 @@ body {
   white-space: nowrap;
 }
 
+.chat-status-stop-btn {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+}
+
 .tool-step {
   background: var(--paper-warm);
   border: 1px solid var(--border);
@@ -438,7 +453,7 @@ body {
   font-size: 11px;
   padding: 8px 10px;
   border-top: 1px solid var(--border);
-  max-height: 120px;
+  max-height: 200px;
   overflow-y: auto;
   white-space: pre-wrap;
   color: var(--charcoal-light);
@@ -2230,7 +2245,6 @@ body {
   max-width: min(100%, 720px);
   border-radius: 10px;
   background: rgba(15, 23, 42, 0.06);
-  border: 1px solid var(--border);
 }
 
 .message-media-image {

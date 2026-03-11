@@ -26,6 +26,8 @@ export interface Attachment {
   data: string;       // base64-encoded (no data URI prefix)
   media_type: string; // e.g. "image/png"
   name: string;
+  /** When set, backend reads from this path instead of data (e.g. after paste-save). */
+  path?: string;
 }
 
 export async function sendMessage(chatId: number, content: string, attachments?: Attachment[]): Promise<void> {
@@ -34,6 +36,29 @@ export async function sendMessage(chatId: number, content: string, attachments?:
     content,
     attachments: attachments && attachments.length > 0 ? attachments : null,
   });
+}
+
+export async function stopAgent(chatId: number): Promise<void> {
+  return invoke("stop_agent", { chatId });
+}
+
+export interface SavedAttachment {
+  path: string;
+  name: string;
+  media_type: string;
+}
+
+export async function saveAttachmentFile(
+  dataBase64: string,
+  name: string,
+  mediaType: string,
+  chatId?: number | null,
+): Promise<SavedAttachment> {
+  return invoke("save_attachment_file", { dataBase64, name, mediaType, chatId: chatId ?? null });
+}
+
+export async function readAttachmentAsDataUrl(path: string): Promise<string> {
+  return invoke("read_attachment_as_data_url", { path });
 }
 
 export async function getHistory(chatId: number, limit?: number): Promise<StoredMessage[]> {

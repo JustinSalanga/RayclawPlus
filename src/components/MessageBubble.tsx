@@ -268,6 +268,36 @@ export const BotMessageMarkdown = memo(function BotMessageMarkdown({
             )
           ) : null;
         },
+        a({ href, children, ...props }) {
+          if (!href) return <a href={href} {...props}>{children}</a>;
+          const kind = mediaKindForPath(href);
+          if (!kind) return <a href={href} {...props}>{children}</a>;
+          const resolved = resolveMediaSource(href);
+          if (kind === "image") {
+            const alt = typeof children === "string" ? children : href.split(/[\\/]/).pop() ?? "";
+            return onImagePreview ? (
+              <button type="button" className="message-media-button" onClick={() => onImagePreview(resolved, alt)} title="Open image preview">
+                <img className="message-media message-media-image" src={resolved} alt={alt} loading="lazy" />
+              </button>
+            ) : (
+              <img className="message-media message-media-image" src={resolved} alt={alt} loading="lazy" />
+            );
+          }
+          if (kind === "audio") {
+            return <audio className="message-media message-media-audio" src={resolved} controls preload="metadata" />;
+          }
+          if (kind === "video") {
+            return <video className="message-media message-media-video" src={resolved} controls preload="metadata" playsInline />;
+          }
+          if (kind === "pdf") {
+            return (
+              <div className="message-media message-media-pdf-frame">
+                <iframe className="message-media-pdf" src={resolved} title={href.split(/[\\/]/).pop() ?? "PDF"} />
+              </div>
+            );
+          }
+          return <a href={href} {...props}>{children}</a>;
+        },
       }}
     >
       {content}
@@ -309,12 +339,43 @@ function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry }: Mess
   const imagePreviewDragRef = useRef<{ startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
   const imagePreviewZoomAnimationRef = useRef<number | null>(null);
   const imagePreviewZoomAnchorRef = useRef<ZoomAnchor | null>(null);
-  const inlineMediaReferences = useMemo(() => extractMediaReferences(message.content), [message.content]);
   const attachmentMediaReferences = useMemo(() => extractAttachmentMediaReferences(message), [message]);
+  // User messages show attachment previews in a separate media stack
   const mediaReferences = useMemo(
-    () => [...attachmentMediaReferences, ...inlineMediaReferences],
-    [attachmentMediaReferences, inlineMediaReferences],
+    () => isBot ? [] : attachmentMediaReferences,
+    [isBot, attachmentMediaReferences],
   );
+  const botContentWithInlineMedia = useMemo(() => {
+    if (!isBot) return message.content;
+    let content = message.content;
+
+    // Resolve local paths inside existing markdown images to Tauri asset URLs
+    // so ReactMarkdown can load them (backslash paths + bare C:/ paths both work).
+    content = content.replace(
+      /!\[([^\]]*)\]\(([^)]+)\)/g,
+      (_match, alt: string, href: string) => {
+        const resolved = resolveMediaSource(href.replace(/\\/g, "/"));
+        return `![${alt}](${resolved})`;
+      },
+    );
+
+    // Convert bare local/remote media paths into markdown syntax with resolved URLs
+    const refs = extractMediaReferences(content);
+    for (const ref of refs) {
+      const escaped = ref.original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const alreadyMd = new RegExp(`!\\[[^\\]]*\\]\\(\\s*${escaped.replace(/\\\\/g, "[/\\\\\\\\]")}`);
+      if (alreadyMd.test(content)) continue;
+      const label = ref.original.split(/[\\/]/).pop() ?? "media";
+      const resolved = resolveMediaSource(ref.original);
+      if (ref.kind === "image") {
+        content = content.replace(ref.original, `![${label}](${resolved})`);
+      } else {
+        content = content.replace(ref.original, `[${label}](${resolved})`);
+      }
+    }
+
+    return content;
+  }, [isBot, message.content]);
   const userDisplayText = useMemo(
     () => (message.attachmentPreviews?.length ? stripImagePlaceholder(message.content) : message.content),
     [message.attachmentPreviews, message.content],
@@ -648,7 +709,7 @@ function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry }: Mess
             </div>
           )}
           {isBot ? (
-            <BotMessageMarkdown content={message.content} onImagePreview={handleOpenImagePreview} />
+            <BotMessageMarkdown content={botContentWithInlineMedia} onImagePreview={handleOpenImagePreview} />
           ) : userDisplayText ? (
             <p>{userDisplayText}</p>
           ) : null}

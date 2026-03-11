@@ -1372,6 +1372,7 @@ async fn send_and_store_response_with_events(
         content: text,
         is_from_bot: false,
         timestamp: chrono::Utc::now().to_rfc3339(),
+        attachment_paths: None,
     };
     call_blocking(state.app_state.db.clone(), move |db| {
         db.store_message(&user_msg)

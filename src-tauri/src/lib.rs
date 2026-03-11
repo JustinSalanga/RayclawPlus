@@ -539,6 +539,7 @@ pub fn run() {
                 runtime: rt,
                 channel_handles: std::sync::Mutex::new(handles),
                 channel_enabled: std::sync::Mutex::new(channel_enabled),
+                agent_handles: std::sync::Mutex::new(std::collections::HashMap::new()),
             });
 
             info!("Tauri setup complete");
@@ -551,7 +552,10 @@ pub fn run() {
             commands::get_channel_status,
             commands::toggle_channel,
             commands::send_message,
+            commands::stop_agent,
             commands::get_history,
+            commands::save_attachment_file,
+            commands::read_attachment_as_data_url,
             commands::get_chats,
             commands::reset_session,
             commands::new_chat,

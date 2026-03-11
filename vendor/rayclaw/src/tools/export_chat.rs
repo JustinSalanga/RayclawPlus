@@ -145,6 +145,7 @@ mod tests {
             content: "hello".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:01Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
         db.store_message(&StoredMessage {
@@ -154,6 +155,7 @@ mod tests {
             content: "hi there!".into(),
             is_from_bot: true,
             timestamp: "2024-01-01T00:00:02Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
 
@@ -183,6 +185,7 @@ mod tests {
             content: "hello".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:01Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
 
@@ -211,6 +214,7 @@ mod tests {
             content: "hello".into(),
             is_from_bot: false,
             timestamp: "2024-01-01T00:00:01Z".into(),
+            attachment_paths: None,
         })
         .unwrap();
         let out_path = dir.join("control_export.md");

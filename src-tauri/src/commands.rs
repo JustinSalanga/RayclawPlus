@@ -1,6 +1,8 @@
 use crate::state::DesktopState;
+use base64::Engine;
 use rayclaw::runtime::AppState;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tracing::{debug, error, info};
@@ -24,6 +26,13 @@ pub struct ChatSummaryDto {
     pub last_message_preview: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentPathDto {
+    pub path: String,
+    pub name: String,
+    pub media_type: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct StoredMessageDto {
     pub id: String,
@@ -32,6 +41,8 @@ pub struct StoredMessageDto {
     pub content: String,
     pub is_from_bot: bool,
     pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachment_paths: Option<Vec<AttachmentPathDto>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -271,15 +282,23 @@ fn apply_channel_secret(
 }
 
 /// Store a user message in the database (since we use AppState directly, not SDK).
-fn store_user_message(state: &AppState, chat_id: i64, text: &str) {
+fn store_user_message(
+    state: &AppState,
+    chat_id: i64,
+    text: &str,
+    message_id: Option<&str>,
+    attachment_paths: Option<&str>,
+) {
     let _ = state.db.upsert_chat(chat_id, None, "desktop");
+    let id = message_id.map(String::from).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let msg = rayclaw::db::StoredMessage {
-        id: uuid::Uuid::new_v4().to_string(),
+        id,
         chat_id,
         sender_name: "user".to_string(),
         content: text.to_string(),
         is_from_bot: false,
         timestamp: chrono::Utc::now().to_rfc3339(),
+        attachment_paths: attachment_paths.map(String::from),
     };
     let _ = state.db.store_message(&msg);
 }
@@ -293,6 +312,7 @@ fn store_bot_message(state: &AppState, chat_id: i64, text: &str) {
         content: text.to_string(),
         is_from_bot: true,
         timestamp: chrono::Utc::now().to_rfc3339(),
+        attachment_paths: None,
     };
     let _ = state.db.store_message(&msg);
 }
@@ -632,10 +652,26 @@ pub async fn toggle_channel(
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AttachmentDto {
-    pub data: String,       // base64-encoded file data
+    /// Base64-encoded file data (when sending from frontend memory).
+    pub data: String,
     pub media_type: String, // e.g. "image/png"
-    #[allow(dead_code)]
-    pub name: String, // original filename (used by frontend)
+    pub name: String,       // original filename
+    /// When set, backend reads file from this path instead of using data (e.g. after paste-save).
+    pub path: Option<String>,
+}
+
+fn extension_from_media_type(media_type: &str) -> &'static str {
+    if media_type.contains("png") {
+        "png"
+    } else if media_type.contains("jpeg") || media_type.contains("jpg") {
+        "jpg"
+    } else if media_type.contains("gif") {
+        "gif"
+    } else if media_type.contains("webp") {
+        "webp"
+    } else {
+        "bin"
+    }
 }
 
 #[tauri::command]
@@ -648,6 +684,7 @@ pub async fn send_message(
     let desktop = app.state::<DesktopState>();
     let state = require_state(&desktop).await?;
     let rt_handle = desktop.runtime.handle().clone();
+    let app_for_spawn = app.clone();
 
     let attachments = attachments.unwrap_or_default();
     info!(
@@ -656,9 +693,9 @@ pub async fn send_message(
         attachments.len()
     );
 
-    rt_handle.spawn(async move {
+    let handle = rt_handle.spawn(async move {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let app_handle = app.clone();
+        let app_handle = app_for_spawn;
         let emit_app = app_handle.clone();
         let emit_chat_id = chat_id;
 
@@ -699,11 +736,73 @@ pub async fn send_message(
             }
         });
 
-        // Extract first image attachment for the LLM vision API
-        let image_data: Option<(String, String)> = attachments
+        // Resolve attachments: path -> read file; else use data (base64)
+        let resolved: Vec<(Vec<u8>, String, String)> = match attachments
             .iter()
-            .find(|a| a.media_type.starts_with("image/"))
-            .map(|a| (a.data.clone(), a.media_type.clone()));
+            .map(|att| {
+                let bytes = if let Some(ref p) = att.path {
+                    std::fs::read(p).map_err(|e| format!("Read attachment {}: {}", p, e))
+                } else {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(att.data.as_bytes())
+                        .map_err(|e| format!("Decode base64: {}", e))
+                }?;
+                Ok((bytes, att.media_type.clone(), att.name.clone()))
+            })
+            .collect::<Result<Vec<_>, String>>()
+        {
+            Ok(r) => r,
+            Err(e) => {
+                error!("send_message: resolve attachments: {}", e);
+                let _ = app_handle.emit(
+                    "agent-stream",
+                    &AgentStreamPayload::Error {
+                        chat_id,
+                        message: e,
+                    },
+                );
+                return;
+            }
+        };
+
+        let message_id = uuid::Uuid::new_v4().to_string();
+        let data_dir = state.config.runtime_data_dir();
+        let attachment_paths_json =
+            if attachments.is_empty() {
+                None
+            } else {
+                let paths: Vec<serde_json::Value> = resolved
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (bytes, media_type, name))| {
+                        let ext = extension_from_media_type(media_type);
+                        let ts = chrono::Local::now().format("%Y%m%d_%H%M%S_%3f");
+                        let safe_name = name.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_' && c != '.', "_");
+                        let filename = format!("{safe_name}_{ts}_{i}.{ext}");
+                        let attachments_dir = Path::new(&data_dir)
+                            .join("groups")
+                            .join(chat_id.to_string())
+                            .join("attachments");
+                        let _ = std::fs::create_dir_all(&attachments_dir);
+                        let path = attachments_dir.join(&filename);
+                        let path_str = path.to_string_lossy().to_string();
+                        let _ = std::fs::write(&path, bytes);
+                        serde_json::json!({ "path": path_str, "name": name, "media_type": media_type })
+                    })
+                    .collect();
+                Some(serde_json::to_string(&paths).unwrap_or_default())
+            };
+
+        // First image for the LLM vision API (base64)
+        let image_data: Option<(String, String)> = resolved
+            .iter()
+            .find(|(_, mt, _)| mt.starts_with("image/"))
+            .map(|(bytes, mt, _)| {
+                (
+                    base64::engine::general_purpose::STANDARD.encode(bytes),
+                    mt.clone(),
+                )
+            });
 
         // Build stored content: prefix with [image] if we have an image attachment
         let stored_content = if image_data.is_some() {
@@ -716,8 +815,17 @@ pub async fn send_message(
             content.clone()
         };
 
-        // Store user message (we're using AppState directly, not SDK)
-        store_user_message(&state, chat_id, &stored_content);
+        // Store user message with attachment paths
+        store_user_message(
+            &state,
+            chat_id,
+            &stored_content,
+            Some(&message_id),
+            attachment_paths_json.as_deref(),
+        );
+
+        // Close any stale browser daemon so the new turn starts headless
+        rayclaw::tools::browser::BrowserTool::close_session(chat_id).await;
 
         // Run agent
         debug!("send_message: starting agent for chat_id={chat_id}");
@@ -756,9 +864,42 @@ pub async fn send_message(
             }
         }
 
+        rayclaw::tools::browser::BrowserTool::close_session(chat_id).await;
+
         let _ = fwd.await;
+        if let Some(desktop) = app_handle.try_state::<DesktopState>() {
+            desktop.agent_handles.lock().unwrap().remove(&emit_chat_id);
+        }
     });
 
+    {
+        let mut guards = desktop.agent_handles.lock().unwrap();
+        if let Some(old) = guards.insert(chat_id, handle) {
+            old.abort();
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_agent(app: tauri::AppHandle, chat_id: i64) -> Result<(), String> {
+    let desktop = app.state::<DesktopState>();
+    let handle = desktop
+        .agent_handles
+        .lock()
+        .unwrap()
+        .remove(&chat_id);
+    if let Some(h) = handle {
+        h.abort();
+        let _ = app.emit(
+            "agent-stream",
+            &AgentStreamPayload::Error {
+                chat_id,
+                message: "Stopped by user".to_string(),
+            },
+        );
+    }
     Ok(())
 }
 
@@ -777,15 +918,79 @@ pub async fn get_history(
 
     Ok(messages
         .into_iter()
-        .map(|m| StoredMessageDto {
-            id: m.id,
-            chat_id: m.chat_id,
-            sender_name: m.sender_name,
-            content: m.content,
-            is_from_bot: m.is_from_bot,
-            timestamp: m.timestamp,
+        .map(|m| {
+            let attachment_paths = m.attachment_paths.as_ref().and_then(|s| {
+                serde_json::from_str::<Vec<AttachmentPathDto>>(s).ok()
+            });
+            StoredMessageDto {
+                id: m.id,
+                chat_id: m.chat_id,
+                sender_name: m.sender_name,
+                content: m.content,
+                is_from_bot: m.is_from_bot,
+                timestamp: m.timestamp,
+                attachment_paths,
+            }
         })
         .collect())
+}
+
+/// Save attachment data (e.g. pasted image) to app work dir. Returns the file path.
+#[tauri::command]
+pub async fn save_attachment_file(
+    app: tauri::AppHandle,
+    data_base64: String,
+    name: String,
+    media_type: String,
+    chat_id: Option<i64>,
+) -> Result<AttachmentPathDto, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let data_dir = state.config.runtime_data_dir();
+    let uploads_dir = match chat_id {
+        Some(cid) => Path::new(&data_dir)
+            .join("groups")
+            .join(cid.to_string())
+            .join("uploads"),
+        None => Path::new(&data_dir).join("uploads"),
+    };
+    std::fs::create_dir_all(&uploads_dir).map_err(|e| e.to_string())?;
+    let ext = extension_from_media_type(&media_type);
+    let ts = chrono::Local::now().format("%Y%m%d_%H%M%S_%3f");
+    let safe_name = name
+        .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_' && c != '.', "_");
+    let display_name = if safe_name.is_empty() { "pasted".to_string() } else { safe_name };
+    let filename = format!("{display_name}_{ts}.{ext}");
+    let path = uploads_dir.join(&filename);
+    let path_str = path.to_string_lossy().to_string();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| e.to_string())?;
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    Ok(AttachmentPathDto {
+        path: path_str,
+        name: if name.is_empty() { filename.clone() } else { name },
+        media_type,
+    })
+}
+
+/// Read an attachment file from work dir and return as data URL for display.
+#[tauri::command]
+pub async fn read_attachment_as_data_url(_app: tauri::AppHandle, path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("Read {}: {}", path, e))?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    // Infer media type from path extension if needed; default image/png for display
+    let mt = path
+        .rsplit('.')
+        .next()
+        .map(|ext| match ext.to_lowercase().as_str() {
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            _ => "image/png",
+        })
+        .unwrap_or("image/png");
+    Ok(format!("data:{};base64,{}", mt, b64))
 }
 
 #[tauri::command]
