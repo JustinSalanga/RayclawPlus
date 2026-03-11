@@ -354,7 +354,7 @@ fn capture_native_windows(
 
     use windows_capture::settings::MinimumUpdateIntervalSettings;
 
-    let min_interval = MinimumUpdateIntervalSettings::Custom(Duration::from_millis(1));
+    let min_interval = MinimumUpdateIntervalSettings::Custom(Duration::ZERO);
 
     // Build [primary, ...others] so screen_id 0 = primary, 1 = second, etc. (no inverted index).
     let monitors_ordered = monitors_primary_first()?;
@@ -401,7 +401,6 @@ fn capture_single_monitor(
     screen_count: usize,
     min_interval: windows_capture::settings::MinimumUpdateIntervalSettings,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    use image::{ImageBuffer, Rgba};
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
     use windows_capture::capture::{Context, GraphicsCaptureApiHandler};
     use windows_capture::frame::Frame;
@@ -469,19 +468,13 @@ fn capture_single_monitor(
 
             let mut buf = frame.buffer()?;
             let pixels = buf.as_nopadding_buffer()?;
-
-            let mut img = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(
-                frame_w,
-                frame_h,
-                pixels.to_vec(),
-            )
-            .ok_or("Failed to create image buffer")?;
+            let mut pixels = pixels.to_vec();
 
             if cursor_visible {
-                draw_cursor_highlight(&mut img, cx, cy, 16);
+                draw_cursor_highlight_raw(&mut pixels, frame_w, frame_h, cx, cy, 16);
             }
 
-            img.save(&self.path)?;
+            save_png_fast(&self.path, &pixels, frame_w, frame_h)?;
 
             capture_control.stop();
             Ok(())
@@ -547,6 +540,65 @@ fn capture_single_monitor(
     .to_string())
 }
 
+/// Encode and write PNG with fast compression to minimize capture time.
+#[cfg(target_os = "windows")]
+fn save_png_fast(
+    path: &Path,
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use std::io::BufWriter;
+
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    use image::{ExtendedColorType, ImageEncoder};
+
+    let f = std::fs::File::create(path)?;
+    let w = BufWriter::new(f);
+    let encoder = PngEncoder::new_with_quality(w, CompressionType::Fast, FilterType::NoFilter);
+    encoder
+        .write_image(pixels, width, height, ExtendedColorType::Rgba8)
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+    Ok(())
+}
+
+/// Draw cursor highlight ring on raw RGBA buffer (row-major, 4 bytes per pixel).
+#[cfg(target_os = "windows")]
+fn draw_cursor_highlight_raw(
+    buf: &mut [u8],
+    width: u32,
+    height: u32,
+    cx: i32,
+    cy: i32,
+    radius: i32,
+) {
+    let [r, g, b, a] = [255u8, 0, 0, 200];
+    let stroke = 2i32;
+    let inner = (radius - stroke).max(0);
+    let inner_sq = inner * inner;
+    let outer_sq = radius * radius;
+    let width_i = width as i32;
+    let height_i = height as i32;
+    for x in -radius..=radius {
+        for y in -radius..=radius {
+            let d_sq = x * x + y * y;
+            if d_sq >= inner_sq && d_sq <= outer_sq {
+                let px = cx + x;
+                let py = cy + y;
+                if px >= 0 && py >= 0 && px < width_i && py < height_i {
+                    let idx = ((py as u32) * width + (px as u32)) as usize * 4;
+                    if idx + 3 < buf.len() {
+                        buf[idx] = r;
+                        buf[idx + 1] = g;
+                        buf[idx + 2] = b;
+                        buf[idx + 3] = a;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Returns the (left, top) of the monitor in screen coordinates. Used so cursor position
 /// and highlight are correct for the captured monitor (no wrong-screen highlight).
 #[cfg(target_os = "windows")]
@@ -564,36 +616,6 @@ fn monitor_rect_origin(hmonitor: *mut std::ffi::c_void) -> (i32, i32) {
             (info.rcMonitor.left, info.rcMonitor.top)
         } else {
             (0, 0)
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn draw_cursor_highlight(
-    img: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
-    cx: i32,
-    cy: i32,
-    radius: i32,
-) {
-    let [r, g, b, a] = [255u8, 0, 0, 200];
-    let stroke = 2i32;
-    let inner = (radius - stroke).max(0);
-    let inner_sq = inner * inner;
-    let outer_sq = radius * radius;
-    for x in -radius..=radius {
-        for y in -radius..=radius {
-            let d_sq = x * x + y * y;
-            if d_sq >= inner_sq && d_sq <= outer_sq {
-                let px = cx + x;
-                let py = cy + y;
-                if px >= 0
-                    && py >= 0
-                    && px < img.width() as i32
-                    && py < img.height() as i32
-                {
-                    img.put_pixel(px as u32, py as u32, image::Rgba([r, g, b, a]));
-                }
-            }
         }
     }
 }
