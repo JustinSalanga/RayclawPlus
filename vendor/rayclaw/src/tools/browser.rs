@@ -168,13 +168,10 @@ impl BrowserTool {
     fn base_env() -> Vec<(String, String)> {
         // Force headless mode for the bundled agent-browser daemon unless the
         // user has explicitly overridden it. The agent-browser docs specify
-        // that `AGENT_BROWSER_HEADED=1` enables headed mode; anything else is
         // treated as disabled. We set it to "0" so that even if a config file
         // requests headed mode, the environment keeps the daemon headless.
         let mut env = Vec::new();
-        if std::env::var("AGENT_BROWSER_HEADED").is_err() {
-            env.push(("AGENT_BROWSER_HEADED".to_string(), "0".to_string()));
-        }
+       
         if let Ok(browsers_path) = std::env::var("PLAYWRIGHT_BROWSERS_PATH") {
             if !browsers_path.trim().is_empty() {
                 env.push(("PLAYWRIGHT_BROWSERS_PATH".to_string(), browsers_path));
@@ -359,32 +356,70 @@ impl Tool for BrowserTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "browser".into(),
-            description: "Headless browser automation via agent-browser CLI. Browser state (cookies, localStorage, login sessions) persists across calls and across conversations.\n\n\
+            description: "Headless browser automation via agent-browser CLI. Fast Rust CLI with Node.js fallback. \
+                Browser state (cookies, localStorage, login sessions) persists across calls via a background daemon.\n\n\
                 ## Basic workflow\n\
                 1. `open <url>` — navigate to a URL\n\
                 2. `snapshot -i` — get interactive elements with refs (@e1, @e2, ...)\n\
-                3. `click @e1` / `fill @e2 \"text\"` — interact with elements\n\
-                4. `get text @e3` — extract text content\n\
-                5. Always run `snapshot -i` after navigation or interaction to see updated state\n\n\
+                3. `click @e1` / `fill @e2 \"text\"` — interact using refs from snapshot\n\
+                4. `get text @e3` — extract text by ref\n\
+                5. Always re-run `snapshot -i` after navigation or interaction to see updated state\n\n\
+                ## Selectors\n\
+                **Refs (recommended)**: `@e1`, `@e2` — deterministic refs from `snapshot`. Fast, no DOM re-query.\n\
+                **CSS**: `\"#id\"`, `\".class\"`, `\"div > button\"`\n\
+                **Text/XPath**: `\"text=Submit\"`, `\"xpath=//button\"`\n\
+                **Semantic find**: `find role button click --name \"Submit\"`, `find label \"Email\" fill \"test@test.com\"`, \
+                `find text \"Sign In\" click`, `find first \".item\" click`, `find nth 2 \"a\" text`\n\n\
                 ## All available commands\n\
-                **Navigation**: open, back, forward, reload, close\n\
-                **Interaction**: click, dblclick, fill, type, press, hover, select, check, uncheck, upload, drag\n\
-                **Scrolling**: scroll <dir> [px], scrollintoview <sel>\n\
-                **Data extraction**: get text/html/value/attr/title/url/count/box <sel>\n\
-                **State checks**: is visible/enabled/checked <sel>\n\
-                **Snapshot**: snapshot (-i for interactive only, -c for compact)\n\
-                **Screenshot/PDF**: screenshot [path] (--full for full page), pdf <path>\n\
-                **JavaScript**: eval <js>\n\
-                **Cookies**: cookies, cookies set <name> <val>, cookies clear\n\
-                **Storage**: storage local [key], storage local set <k> <v>, storage local clear (same for session)\n\
-                **Tabs**: tab, tab new [url], tab <n>, tab close [n]\n\
-                **Frames**: frame <sel>, frame main\n\
-                **Dialogs**: dialog accept [text], dialog dismiss\n\
-                **Viewport**: set viewport <w> <h>, set device <name>, set media dark/light\n\
-                **Network**: network route <url> [--abort|--body <json>], network requests\n\
-                **Wait**: wait <sel|ms|--text|--url|--load|--fn>\n\
-                **Auth state**: state save <path>, state load <path>\n\
-                **Semantic find**: find role/text/label/placeholder <value> <action> [input]".into(),
+                **Navigation**: `open <url>`, `back`, `forward`, `reload`, `close`\n\
+                **Interaction**: `click <sel>` (--new-tab), `dblclick <sel>`, `fill <sel> <text>`, `type <sel> <text>`, \
+                `press <key>`, `keyboard type <text>`, `keyboard inserttext <text>`, `keydown <key>`, `keyup <key>`, \
+                `hover <sel>`, `focus <sel>`, `select <sel> <val>`, `check <sel>`, `uncheck <sel>`, \
+                `upload <sel> <files>`, `drag <src> <tgt>`\n\
+                **Mouse**: `mouse move <x> <y>`, `mouse down [button]`, `mouse up [button]`, `mouse wheel <dy> [dx]`\n\
+                **Scrolling**: `scroll <dir> [px]` (--selector <sel>), `scrollintoview <sel>`\n\
+                **Data extraction**: `get text/html/value/attr/title/url/count/box/styles <sel>`\n\
+                **State checks**: `is visible/enabled/checked <sel>`\n\
+                **Snapshot**: `snapshot` (-i interactive, -C cursor-interactive, -c compact, -d <depth>, -s <selector>)\n\
+                **Screenshot/PDF**: `screenshot [path]` (--full, --annotate for numbered element labels), `pdf <path>`\n\
+                **JavaScript**: `eval <js>` (-b for base64, --stdin for piped input)\n\
+                **Wait**: `wait <selector>`, `wait <ms>`, `wait --text \"...\"`, `wait --url \"**/...\"`, \
+                `wait --load networkidle|load|domcontentloaded`, `wait --fn \"condition\"`, `wait --download [path]`\n\
+                **Downloads**: `download <sel> <path>`, `wait --download [path]`\n\
+                **Cookies**: `cookies`, `cookies set <name> <val>`, `cookies clear`\n\
+                **Storage**: `storage local [key]`, `storage local set <k> <v>`, `storage local clear` (same for session)\n\
+                **Tabs/Windows**: `tab`, `tab new [url]`, `tab <n>`, `tab close [n]`, `window new`\n\
+                **Frames**: `frame <sel>`, `frame main`\n\
+                **Dialogs**: `dialog accept [text]`, `dialog dismiss`\n\
+                **Settings**: `set viewport <w> <h> [scale]`, `set device <name>`, `set geo <lat> <lng>`, \
+                `set offline [on|off]`, `set headers <json>`, `set credentials <u> <p>`, `set media [dark|light]`\n\
+                **Network**: `network route <url>` [--abort|--body <json>], `network unroute [url]`, \
+                `network requests` [--filter <pat>|--clear]\n\
+                **Auth vault**: `auth save <name> --url <url> --username <u> --password-stdin`, `auth login <name>`, \
+                `auth list`, `auth show <name>`, `auth delete <name>`\n\
+                **State**: `state save/load <path>`, `state list`, `state show <file>`, \
+                `state rename <old> <new>`, `state clear [name|--all]`, `state clean --older-than <days>`\n\
+                **Diff**: `diff snapshot` [--baseline <path>] [--selector <sel>] [--compact], \
+                `diff screenshot --baseline <path>` [-o <path>] [-t <tolerance>], \
+                `diff url <url1> <url2>` [--screenshot] [--wait-until networkidle] [--selector <sel>]\n\
+                **Debug**: `trace start/stop [path]`, `profiler start`, `profiler stop [path]`, \
+                `console` [--clear], `errors` [--clear], `highlight <sel>`\n\
+                **Sessions**: `session`, `session list`. Use `--session <name>` for isolated instances.\n\n\
+                ## Annotated screenshots\n\
+                `screenshot --annotate` overlays numbered labels [N] on interactive elements. \
+                Each label corresponds to ref @eN so you can immediately `click @e2` after. \
+                Useful for visual reasoning about layout, icon buttons, and canvas elements.\n\n\
+                ## Command chaining\n\
+                Chain with `&&` in a single command string for efficiency:\n\
+                `open example.com && wait --load networkidle && snapshot -i`\n\
+                Use separate calls when you need to parse intermediate output (e.g. snapshot refs before clicking).\n\n\
+                ## Tips\n\
+                - Prefer refs (`@e1`) over CSS selectors for reliability.\n\
+                - Use `snapshot -i` (interactive only) to reduce output size.\n\
+                - Use `wait --load networkidle` after `open` for SPAs that load dynamically.\n\
+                - Use `--json` for machine-readable output.\n\
+                - Default Playwright timeout is 25s. Override with `timeout_secs` parameter if needed."
+                .into(),
             input_schema: schema_object(
                 json!({
                     "command": {
@@ -418,7 +453,6 @@ impl Tool for BrowserTool {
 
         let mut args = vec![
             "--session".to_string(), session_name,
-            "--headed".to_string(), "false".to_string(),
         ];
         if let Some(auth) = auth.as_ref() {
             let path = self.profile_path(auth.caller_chat_id);
@@ -436,18 +470,35 @@ impl Tool for BrowserTool {
             }
         };
 
-        // For screenshot commands without an explicit path, inject one into
-        // groups/{chat_id}/screenshots/ so images are saved consistently.
+        // Force all screenshot commands to save into the standardised path
+        // groups/{chat_id}/screenshots/ regardless of what the agent requested.
         if let Some(auth_ctx) = auth.as_ref() {
             let verb = command_args.first().map(|s| s.as_str());
             if verb == Some("screenshot") {
-                let has_path = command_args.iter().skip(1).any(|a| !a.starts_with('-'));
-                if !has_path {
-                    let out = self.screenshot_path(auth_ctx.caller_chat_id, "browser_screenshot");
-                    if let Some(parent) = out.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    command_args.push(out.to_string_lossy().to_string());
+                // Derive a name from the agent-provided path (if any), otherwise default.
+                let existing_path_idx = command_args
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .find(|(_, a)| !a.starts_with('-'))
+                    .map(|(i, _)| i);
+                let base_name = existing_path_idx
+                    .and_then(|i| {
+                        std::path::Path::new(&command_args[i])
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .map(String::from)
+                    })
+                    .unwrap_or_else(|| "browser_screenshot".to_string());
+                let out = self.screenshot_path(auth_ctx.caller_chat_id, &base_name);
+                if let Some(parent) = out.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let out_str = out.to_string_lossy().to_string();
+                if let Some(idx) = existing_path_idx {
+                    command_args[idx] = out_str;
+                } else {
+                    command_args.push(out_str);
                 }
             }
         }
