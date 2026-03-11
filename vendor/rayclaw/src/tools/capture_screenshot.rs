@@ -1,10 +1,14 @@
 use std::path::{Path, PathBuf};
 
+#[cfg(target_os = "windows")]
+use windows_capture::monitor::Monitor;
+
 use async_trait::async_trait;
 use serde_json::json;
 use tracing::info;
 
 use crate::llm_types::ToolDefinition;
+#[cfg(not(target_os = "windows"))]
 use crate::text::floor_char_boundary;
 
 use super::{auth_context_from_input, schema_object, Tool, ToolResult};
@@ -113,96 +117,6 @@ impl CaptureScreenshotTool {
         false
     }
 
-    #[cfg(target_os = "windows")]
-    fn build_capture_command(path: &Path, screen_id: Option<u32>) -> tokio::process::Command {
-        let escaped_path = path.to_string_lossy().replace('\'', "''");
-        let screen_id_line = screen_id
-            .map(|id| format!("$screenId = {id}"))
-            .unwrap_or_else(|| "$screenId = $null".to_string());
-        let script = format!(
-            r#"
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-Add-Type @"
-using System.Runtime.InteropServices;
-public static class RayclawScreenshotNative {{
-    [DllImport("user32.dll")]
-    public static extern bool SetProcessDPIAware();
-}}
-"@
-[void][RayclawScreenshotNative]::SetProcessDPIAware()
-{screen_id_line}
-$screens = [System.Windows.Forms.Screen]::AllScreens
-if ($screenId -ne $null) {{
-  if ($screenId -lt 0 -or $screenId -ge $screens.Length) {{
-    Write-Error "Invalid screen_id $screenId. Available screen ids: 0..$($screens.Length - 1)"
-    exit 2
-  }}
-  $screen = $screens[$screenId]
-  $bounds = $screen.Bounds
-  $deviceName = $screen.DeviceName
-}} else {{
-  $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
-  $deviceName = $null
-}}
-$bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-$graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bitmap.Size)
-
-$cursorPos = [System.Windows.Forms.Cursor]::Position
-$cursorScreenX = $cursorPos.X
-$cursorScreenY = $cursorPos.Y
-$cx = $cursorPos.X - $bounds.Left
-$cy = $cursorPos.Y - $bounds.Top
-$cursorVisible = ($cx -ge 0 -and $cx -lt $bounds.Width -and $cy -ge 0 -and $cy -lt $bounds.Height)
-if ($cursorVisible) {{
-  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-  $outerSize = 32
-  $outerPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(200, 255, 0, 0)), 3
-  $graphics.DrawEllipse($outerPen, ($cx - $outerSize/2), ($cy - $outerSize/2), $outerSize, $outerSize)
-  $outerPen.Dispose()
-  $innerSize = 6
-  $innerBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(230, 255, 0, 0))
-  $graphics.FillEllipse($innerBrush, ($cx - $innerSize/2), ($cy - $innerSize/2), $innerSize, $innerSize)
-  $innerBrush.Dispose()
-  $crossLen = 8
-  $crossPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(200, 255, 0, 0)), 2
-  $graphics.DrawLine($crossPen, ($cx - $crossLen), $cy, ($cx + $crossLen), $cy)
-  $graphics.DrawLine($crossPen, $cx, ($cy - $crossLen), $cx, ($cy + $crossLen))
-  $crossPen.Dispose()
-}}
-
-$bitmap.Save('{escaped_path}', [System.Drawing.Imaging.ImageFormat]::Png)
-$graphics.Dispose()
-$bitmap.Dispose()
-[pscustomobject]@{{
-  path = '{escaped_path}'
-  screen_id = $screenId
-  device_name = $deviceName
-  origin_x = $bounds.Left
-  origin_y = $bounds.Top
-  width = $bounds.Width
-  height = $bounds.Height
-  scale = 1.0
-  capture_scope = $(if ($screenId -ne $null) {{ 'screen' }} else {{ 'virtual_desktop' }})
-  screen_count = $screens.Length
-  cursor_x = $cursorScreenX
-  cursor_y = $cursorScreenY
-  cursor_visible = $cursorVisible
-}} | ConvertTo-Json -Compress
-"#,
-            screen_id_line = screen_id_line
-        );
-
-        let mut cmd = tokio::process::Command::new("powershell");
-        cmd.arg("-NoProfile")
-            .arg("-NonInteractive")
-            .arg("-STA")
-            .arg("-Command")
-            .arg(script);
-        cmd
-    }
-
     #[cfg(target_os = "macos")]
     fn build_capture_command(path: &Path, _screen_id: Option<u32>) -> tokio::process::Command {
         let mut cmd = tokio::process::Command::new("screencapture");
@@ -245,6 +159,7 @@ $bitmap.Dispose()
         )
     }
 
+    #[cfg(not(target_os = "windows"))]
     fn truncate_output(text: &str) -> String {
         if text.len() > 8000 {
             let cutoff = floor_char_boundary(text, 8000);
@@ -275,7 +190,7 @@ impl Tool for CaptureScreenshotTool {
                     },
                     "screen_id": {
                         "type": ["integer", "string"],
-                        "description": "Optional monitor index to capture on Windows. Uses Screen.AllScreens order with zero-based ids. If omitted, captures the full virtual desktop."
+                        "description": "Optional monitor index to capture on Windows. Uses the OS monitor order with zero-based ids (0 = primary). If omitted, captures the primary monitor."
                     },
                     "timeout_secs": {
                         "type": "integer",
@@ -328,21 +243,52 @@ impl Tool for CaptureScreenshotTool {
             return ToolResult::error("screen_id is currently supported on Windows only".into());
         }
 
-        #[cfg(target_os = "linux")]
-        let mut command = match Self::build_capture_command(&output_path, screen_id) {
-            Ok(cmd) => cmd,
-            Err(err) => return ToolResult::error(err).with_error_type("missing_dependency"),
-        };
+        #[cfg(target_os = "windows")]
+        {
+            let path = output_path.clone();
+            let sid = screen_id;
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(timeout_secs),
+                tokio::task::spawn_blocking(move || capture_native_windows(&path, sid)),
+            )
+            .await;
 
-        #[cfg(not(target_os = "linux"))]
-        let mut command = Self::build_capture_command(&output_path, screen_id);
+            match result {
+                Ok(Ok(Ok(json_output))) => return ToolResult::success(json_output),
+                Ok(Ok(Err(e))) => {
+                    return ToolResult::error(format!("Screenshot capture failed: {e}"))
+                        .with_error_type("capture_error")
+                }
+                Ok(Err(e)) => {
+                    return ToolResult::error(format!("Screenshot task failed: {e}"))
+                        .with_error_type("spawn_error")
+                }
+                Err(_) => {
+                    return ToolResult::error(format!(
+                        "Desktop screenshot capture timed out after {timeout_secs} seconds"
+                    ))
+                    .with_error_type("timeout")
+                }
+            }
+        }
 
-        let result = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
-            command.kill_on_drop(true).output().await
-        })
-        .await;
+        #[cfg(not(target_os = "windows"))]
+        {
+            #[cfg(target_os = "linux")]
+            let mut command = match Self::build_capture_command(&output_path, screen_id) {
+                Ok(cmd) => cmd,
+                Err(err) => return ToolResult::error(err).with_error_type("missing_dependency"),
+            };
 
-        match result {
+            #[cfg(target_os = "macos")]
+            let mut command = Self::build_capture_command(&output_path, screen_id);
+
+            let result = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
+                command.kill_on_drop(true).output().await
+            })
+            .await;
+
+            match result {
             Ok(Ok(output)) => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -371,25 +317,11 @@ impl Tool for CaptureScreenshotTool {
                 }
 
                 match tokio::fs::metadata(&output_path).await {
-                    Ok(metadata) if metadata.len() > 0 => {
-                        #[cfg(target_os = "windows")]
-                        {
-                            if let Ok(mut value) =
-                                serde_json::from_str::<serde_json::Value>(stdout.trim())
-                            {
-                                if let Some(obj) = value.as_object_mut() {
-                                    obj.insert("bytes".to_string(), json!(metadata.len()));
-                                }
-                                return ToolResult::success(value.to_string());
-                            }
-                        }
-
-                        ToolResult::success(format!(
-                            "Saved desktop screenshot to {} ({} bytes)",
-                            output_path.display(),
-                            metadata.len()
-                        ))
-                    }
+                    Ok(metadata) if metadata.len() > 0 => ToolResult::success(format!(
+                        "Saved desktop screenshot to {} ({} bytes)",
+                        output_path.display(),
+                        metadata.len()
+                    )),
                     Ok(_) => ToolResult::error(format!(
                         "Screenshot command completed but produced an empty file at {}",
                         output_path.display()
@@ -408,6 +340,260 @@ impl Tool for CaptureScreenshotTool {
                 "Desktop screenshot capture timed out after {timeout_secs} seconds"
             ))
             .with_error_type("timeout"),
+        }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn capture_native_windows(
+    path: &Path,
+    screen_id: Option<u32>,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    use std::time::Duration;
+
+    use windows_capture::settings::MinimumUpdateIntervalSettings;
+
+    let min_interval = MinimumUpdateIntervalSettings::Custom(Duration::from_millis(1));
+
+    // Build [primary, ...others] so screen_id 0 = primary, 1 = second, etc. (no inverted index).
+    let monitors_ordered = monitors_primary_first()?;
+    let screen_count = monitors_ordered.len();
+
+    let monitor = match screen_id {
+        None | Some(0) => monitors_ordered.first().cloned().ok_or("No monitors")?,
+        Some(id) => {
+            let idx = id as usize;
+            monitors_ordered
+                .get(idx)
+                .cloned()
+                .ok_or_else(|| format!("screen_id {} out of range (0..{})", id, screen_count))?
+        }
+    };
+
+    capture_single_monitor(path, screen_id, monitor, screen_count, min_interval)
+}
+
+/// Returns monitors with primary first, then others in enumeration order.
+#[cfg(target_os = "windows")]
+fn monitors_primary_first(
+) -> Result<Vec<Monitor>, Box<dyn std::error::Error + Send + Sync>> {
+    use windows_capture::monitor::Monitor;
+
+    let primary = Monitor::primary()?;
+    let primary_raw = primary.as_raw_hmonitor();
+    let list = Monitor::enumerate()?;
+    let mut ordered = Vec::with_capacity(list.len());
+    ordered.push(primary);
+    for m in list {
+        if m.as_raw_hmonitor() != primary_raw {
+            ordered.push(m);
+        }
+    }
+    Ok(ordered)
+}
+
+#[cfg(target_os = "windows")]
+fn capture_single_monitor(
+    path: &Path,
+    screen_id: Option<u32>,
+    monitor: Monitor,
+    screen_count: usize,
+    min_interval: windows_capture::settings::MinimumUpdateIntervalSettings,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    use image::{ImageBuffer, Rgba};
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    use windows_capture::capture::{Context, GraphicsCaptureApiHandler};
+    use windows_capture::frame::Frame;
+    use windows_capture::graphics_capture_api::InternalCaptureControl;
+    use windows_capture::settings::{
+        ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
+        SecondaryWindowSettings, Settings,
+    };
+
+    // Use actual monitor rect so cursor position and highlight are correct for this monitor.
+    let (origin_x, origin_y) = monitor_rect_origin(monitor.as_raw_hmonitor());
+
+    #[derive(Clone)]
+    struct CaptureFlags {
+        path: PathBuf,
+        origin_x: i32,
+        origin_y: i32,
+    }
+
+    struct SingleFrameCapture {
+        path: PathBuf,
+        origin_x: i32,
+        origin_y: i32,
+        done: bool,
+    }
+
+    impl GraphicsCaptureApiHandler for SingleFrameCapture {
+        type Flags = CaptureFlags;
+        type Error = Box<dyn std::error::Error + Send + Sync>;
+
+        fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
+            Ok(Self {
+                path: ctx.flags.path,
+                origin_x: ctx.flags.origin_x,
+                origin_y: ctx.flags.origin_y,
+                done: false,
+            })
+        }
+
+        fn on_frame_arrived(
+            &mut self,
+            frame: &mut Frame,
+            capture_control: InternalCaptureControl,
+        ) -> Result<(), Self::Error> {
+            if self.done {
+                return Ok(());
+            }
+            self.done = true;
+
+            let (cursor_x, cursor_y) = unsafe {
+                let mut pt = std::mem::zeroed();
+                if GetCursorPos(&mut pt).is_ok() {
+                    (pt.x, pt.y)
+                } else {
+                    (0, 0)
+                }
+            };
+
+            let frame_w = frame.width();
+            let frame_h = frame.height();
+            let cx = cursor_x - self.origin_x;
+            let cy = cursor_y - self.origin_y;
+            let cursor_visible =
+                cx >= 0 && cx < frame_w as i32 && cy >= 0 && cy < frame_h as i32;
+
+            let mut buf = frame.buffer()?;
+            let pixels = buf.as_nopadding_buffer()?;
+
+            let mut img = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(
+                frame_w,
+                frame_h,
+                pixels.to_vec(),
+            )
+            .ok_or("Failed to create image buffer")?;
+
+            if cursor_visible {
+                draw_cursor_highlight(&mut img, cx, cy, 16);
+            }
+
+            img.save(&self.path)?;
+
+            capture_control.stop();
+            Ok(())
+        }
+    }
+
+    let settings = Settings::new(
+        monitor.clone(),
+        CursorCaptureSettings::Default,
+        DrawBorderSettings::Default,
+        SecondaryWindowSettings::Default,
+        min_interval,
+        DirtyRegionSettings::Default,
+        ColorFormat::Rgba8,
+        CaptureFlags {
+            path: path.to_path_buf(),
+            origin_x,
+            origin_y,
+        },
+    );
+
+    SingleFrameCapture::start(settings)?;
+
+    let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+
+    let (cursor_x, cursor_y, cursor_visible) = unsafe {
+        let mut pt = std::mem::zeroed();
+        if GetCursorPos(&mut pt).is_ok() {
+            let w = monitor.width().unwrap_or(0) as i32;
+            let h = monitor.height().unwrap_or(0) as i32;
+            let visible = pt.x >= origin_x
+                && pt.x < origin_x + w
+                && pt.y >= origin_y
+                && pt.y < origin_y + h;
+            (pt.x, pt.y, visible)
+        } else {
+            (0, 0, false)
+        }
+    };
+
+    let capture_scope = if screen_id.is_some() {
+        "screen"
+    } else {
+        "virtual_desktop"
+    };
+
+    Ok(json!({
+        "path": path.to_string_lossy(),
+        "screen_id": screen_id,
+        "device_name": Option::<String>::None,
+        "origin_x": origin_x,
+        "origin_y": origin_y,
+        "width": monitor.width().unwrap_or(0),
+        "height": monitor.height().unwrap_or(0),
+        "scale": 1.0,
+        "capture_scope": capture_scope,
+        "screen_count": screen_count,
+        "cursor_x": cursor_x,
+        "cursor_y": cursor_y,
+        "cursor_visible": cursor_visible,
+        "bytes": file_size
+    })
+    .to_string())
+}
+
+/// Returns the (left, top) of the monitor in screen coordinates. Used so cursor position
+/// and highlight are correct for the captured monitor (no wrong-screen highlight).
+#[cfg(target_os = "windows")]
+fn monitor_rect_origin(hmonitor: *mut std::ffi::c_void) -> (i32, i32) {
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
+
+    unsafe {
+        let mut info = MONITORINFO {
+            rcMonitor: std::mem::zeroed(),
+            rcWork: std::mem::zeroed(),
+            dwFlags: 0,
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        };
+        if GetMonitorInfoW(HMONITOR(hmonitor as *mut _), &mut info).as_bool() {
+            (info.rcMonitor.left, info.rcMonitor.top)
+        } else {
+            (0, 0)
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn draw_cursor_highlight(
+    img: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    cx: i32,
+    cy: i32,
+    radius: i32,
+) {
+    let [r, g, b, a] = [255u8, 0, 0, 200];
+    let stroke = 2i32;
+    let inner = (radius - stroke).max(0);
+    let inner_sq = inner * inner;
+    let outer_sq = radius * radius;
+    for x in -radius..=radius {
+        for y in -radius..=radius {
+            let d_sq = x * x + y * y;
+            if d_sq >= inner_sq && d_sq <= outer_sq {
+                let px = cx + x;
+                let py = cy + y;
+                if px >= 0
+                    && py >= 0
+                    && px < img.width() as i32
+                    && py < img.height() as i32
+                {
+                    img.put_pixel(px as u32, py as u32, image::Rgba([r, g, b, a]));
+                }
+            }
         }
     }
 }

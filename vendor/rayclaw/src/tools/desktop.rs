@@ -312,7 +312,8 @@ mod platform {
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_RESTORE,
+        GetForegroundWindow, GetWindowTextW, IsWindow, IsWindowVisible, SetForegroundWindow,
+        ShowWindow, SW_RESTORE,
     };
 
     use super::{
@@ -406,6 +407,23 @@ mod platform {
 
     fn hwnd_to_isize(hwnd: HWND) -> isize {
         hwnd.0 as isize
+    }
+
+    fn is_window_valid(hwnd: isize) -> bool {
+        unsafe { IsWindow(Some(hwnd_from_isize(hwnd))).as_bool() }
+    }
+
+    fn window_title(hwnd: isize) -> Option<String> {
+        unsafe {
+            let mut buffer = vec![0u16; 512];
+            let len = GetWindowTextW(hwnd_from_isize(hwnd), &mut buffer);
+            if len > 0 {
+                buffer.truncate(len as usize);
+                String::from_utf16(&buffer).ok()
+            } else {
+                None
+            }
+        }
     }
 
     fn child_elements(walker: &UITreeWalker, parent: &UIElement) -> Vec<UIElement> {
@@ -593,14 +611,18 @@ mod platform {
             }
 
             let process_id = element.get_process_id().unwrap_or_default();
-            let process_name = process_name(process_id as u32);
-            if !app_name.is_empty()
-                && !process_name
+            let process_name = if app_name.is_empty() {
+                None
+            } else {
+                let name = process_name(process_id as u32);
+                if !name
                     .as_deref()
-                    .is_some_and(|name| contains_ignore_case(name, app_name))
-            {
-                continue;
-            }
+                    .is_some_and(|n| contains_ignore_case(n, app_name))
+                {
+                    continue;
+                }
+                name
+            };
 
             let rect = match element.get_bounding_rectangle() {
                 Ok(rect) => rect,
@@ -908,30 +930,35 @@ mod platform {
     }
 
     pub fn focus_window(request: FocusWindowRequest) -> Result<String> {
-        let windows = list_windows_internal("", "", true)?;
-        let target = if let Some(raw) = request.hwnd.as_deref() {
+        let (hwnd, hwnd_str, title) = if let Some(raw) = request.hwnd.as_deref() {
             let hwnd = parse_window_handle(raw)?;
-            windows
-                .into_iter()
-                .find(|window| parse_window_handle(&window.hwnd).ok() == Some(hwnd))
-                .context("No matching window found")?
-        } else if let Some(title) = request.title.as_deref() {
-            windows
-                .into_iter()
-                .find(|window| window.title.eq_ignore_ascii_case(title))
-                .context("No matching window found")?
-        } else if let Some(title_contains) = request.title_contains.as_deref() {
-            windows
-                .into_iter()
-                .find(|window| contains_ignore_case(&window.title, title_contains))
-                .context("No matching window found")?
+            let hwnd_str = format_hwnd(hwnd);
+            if !is_window_valid(hwnd) {
+                return Err(anyhow!("Window handle {hwnd_str} is not valid"));
+            }
+            let title = window_title(hwnd).unwrap_or_default();
+            (hwnd, hwnd_str, title)
         } else {
-            return Err(anyhow!(
-                "Provide one of 'hwnd', 'title', or 'title_contains'"
-            ));
+            let windows = list_windows_internal("", "", true)?;
+            let target = if let Some(title) = request.title.as_deref() {
+                windows
+                    .into_iter()
+                    .find(|window| window.title.eq_ignore_ascii_case(title))
+                    .context("No matching window found")?
+            } else if let Some(title_contains) = request.title_contains.as_deref() {
+                windows
+                    .into_iter()
+                    .find(|window| contains_ignore_case(&window.title, title_contains))
+                    .context("No matching window found")?
+            } else {
+                return Err(anyhow!(
+                    "Provide one of 'hwnd', 'title', or 'title_contains'"
+                ));
+            };
+            let hwnd = parse_window_handle(&target.hwnd)?;
+            (hwnd, target.hwnd.clone(), target.title)
         };
 
-        let hwnd = parse_window_handle(&target.hwnd)?;
         unsafe {
             let _ = ShowWindow(hwnd_from_isize(hwnd), SW_RESTORE);
         }
@@ -946,8 +973,8 @@ mod platform {
         let is_foreground = hwnd_to_isize(unsafe { GetForegroundWindow() }) == hwnd;
         Ok(json!({
             "action": "focus_window",
-            "hwnd": target.hwnd,
-            "title": target.title,
+            "hwnd": hwnd_str,
+            "title": title,
             "focused": focused || is_foreground
         })
         .to_string())

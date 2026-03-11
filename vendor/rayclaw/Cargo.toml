@@ -216,6 +216,12 @@ features = ["v4"]
 [target.'cfg(windows)'.dependencies.enigo]
 version = "0.6"
 
+[target.'cfg(windows)'.dependencies.image]
+version = "0.25"
+
+[target.'cfg(windows)'.dependencies.windows-capture]
+version = "1.5"
+
 [target.'cfg(windows)'.dependencies.uiautomation]
 version = "0.24"
 
