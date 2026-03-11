@@ -34,6 +34,29 @@ pub enum RayClawError {
     Agent(String),
 }
 
+impl RayClawError {
+    /// Returns `true` for errors that are likely transient and worth retrying
+    /// (server errors, network failures, rate limits).
+    pub fn is_transient(&self) -> bool {
+        match self {
+            RayClawError::RateLimited => true,
+            RayClawError::Http(_) => true,
+            RayClawError::LlmApi(msg) => {
+                let m = msg.to_lowercase();
+                m.contains("500")
+                    || m.contains("502")
+                    || m.contains("503")
+                    || m.contains("529")
+                    || m.contains("internal server error")
+                    || m.contains("overloaded")
+                    || m.contains("timeout")
+                    || m.contains("connection")
+            }
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

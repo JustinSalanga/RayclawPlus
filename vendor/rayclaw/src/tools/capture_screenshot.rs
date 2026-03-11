@@ -148,6 +148,30 @@ if ($screenId -ne $null) {{
 $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bitmap.Size)
+
+$cursorPos = [System.Windows.Forms.Cursor]::Position
+$cursorScreenX = $cursorPos.X
+$cursorScreenY = $cursorPos.Y
+$cx = $cursorPos.X - $bounds.Left
+$cy = $cursorPos.Y - $bounds.Top
+$cursorVisible = ($cx -ge 0 -and $cx -lt $bounds.Width -and $cy -ge 0 -and $cy -lt $bounds.Height)
+if ($cursorVisible) {{
+  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $outerSize = 32
+  $outerPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(200, 255, 0, 0)), 3
+  $graphics.DrawEllipse($outerPen, ($cx - $outerSize/2), ($cy - $outerSize/2), $outerSize, $outerSize)
+  $outerPen.Dispose()
+  $innerSize = 6
+  $innerBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(230, 255, 0, 0))
+  $graphics.FillEllipse($innerBrush, ($cx - $innerSize/2), ($cy - $innerSize/2), $innerSize, $innerSize)
+  $innerBrush.Dispose()
+  $crossLen = 8
+  $crossPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(200, 255, 0, 0)), 2
+  $graphics.DrawLine($crossPen, ($cx - $crossLen), $cy, ($cx + $crossLen), $cy)
+  $graphics.DrawLine($crossPen, $cx, ($cy - $crossLen), $cx, ($cy + $crossLen))
+  $crossPen.Dispose()
+}}
+
 $bitmap.Save('{escaped_path}', [System.Drawing.Imaging.ImageFormat]::Png)
 $graphics.Dispose()
 $bitmap.Dispose()
@@ -162,6 +186,9 @@ $bitmap.Dispose()
   scale = 1.0
   capture_scope = $(if ($screenId -ne $null) {{ 'screen' }} else {{ 'virtual_desktop' }})
   screen_count = $screens.Length
+  cursor_x = $cursorScreenX
+  cursor_y = $cursorScreenY
+  cursor_visible = $cursorVisible
 }} | ConvertTo-Json -Compress
 "#,
             screen_id_line = screen_id_line

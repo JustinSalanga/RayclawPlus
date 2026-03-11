@@ -14,13 +14,15 @@ const FIND_TEXT_MATCH_MODE: &str = "contains_ignore_case";
 const FIND_TEXT_VISION_FALLBACK: &str =
     "No matching text was found via UI Automation. Capture a screenshot and use vision to locate the target visually.";
 
-pub struct ClickTool;
+pub struct MouseClickTool;
+pub struct MouseMoveTool;
 pub struct TypeTextTool;
 pub struct PressKeyTool;
-pub struct ScrollTool;
+pub struct MouseScrollTool;
 pub struct FindTextTool;
 pub struct ListWindowsTool;
 pub struct FocusWindowTool;
+pub struct GetMousePositionTool;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MouseButtonKind {
@@ -950,6 +952,29 @@ mod platform {
         })
         .to_string())
     }
+
+    pub fn get_mouse_position() -> Result<String> {
+        let enigo = create_enigo()?;
+        let (x, y) = enigo.location().map_err(|err| anyhow!(err.to_string()))?;
+        Ok(json!({
+            "x": x,
+            "y": y
+        })
+        .to_string())
+    }
+
+    pub fn mouse_move(x: i32, y: i32) -> Result<String> {
+        let mut enigo = create_enigo()?;
+        enigo
+            .move_mouse(x, y, Coordinate::Abs)
+            .map_err(|err| anyhow!(err.to_string()))?;
+        Ok(json!({
+            "action": "mouse_move",
+            "x": x,
+            "y": y
+        })
+        .to_string())
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -997,17 +1022,25 @@ mod platform {
     pub fn focus_window(_request: FocusWindowRequest) -> Result<String> {
         unsupported()
     }
+
+    pub fn get_mouse_position() -> Result<String> {
+        unsupported()
+    }
+
+    pub fn mouse_move(_x: i32, _y: i32) -> Result<String> {
+        unsupported()
+    }
 }
 
 #[async_trait]
-impl Tool for ClickTool {
+impl Tool for MouseClickTool {
     fn name(&self) -> &str {
-        "click"
+        "mouse_click"
     }
 
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "click".into(),
+            name: "mouse_click".into(),
             description: "Click at screen coordinates. Supports raw screen coordinates, window-relative coordinates, and screenshot metadata for deterministic coordinate conversion.".into(),
             input_schema: schema_object(
                 json!({
@@ -1259,14 +1292,14 @@ impl Tool for PressKeyTool {
 }
 
 #[async_trait]
-impl Tool for ScrollTool {
+impl Tool for MouseScrollTool {
     fn name(&self) -> &str {
-        "scroll"
+        "mouse_scroll"
     }
 
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "scroll".into(),
+            name: "mouse_scroll".into(),
             description: "Scroll the mouse wheel on the desktop. Positive delta scrolls up; negative delta scrolls down.".into(),
             input_schema: schema_object(
                 json!({
@@ -1499,6 +1532,83 @@ impl Tool for FocusWindowTool {
             title_contains,
         };
         run_desktop_operation(timeout_secs, move || platform::focus_window(request)).await
+    }
+}
+
+#[async_trait]
+impl Tool for MouseMoveTool {
+    fn name(&self) -> &str {
+        "mouse_move"
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "mouse_move".into(),
+            description: "Move the mouse cursor to an absolute screen position without clicking."
+                .into(),
+            input_schema: schema_object(
+                json!({
+                    "x": {
+                        "type": "number",
+                        "description": "Target screen X coordinate"
+                    },
+                    "y": {
+                        "type": "number",
+                        "description": "Target screen Y coordinate"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Timeout in seconds (default: 30)"
+                    }
+                }),
+                &["x", "y"],
+            ),
+        }
+    }
+
+    async fn execute(&self, input: serde_json::Value) -> ToolResult {
+        let x = match parse_number(&input, "x") {
+            Some(v) if v.is_finite() => v.round() as i32,
+            Some(_) => return ToolResult::error("'x' must be a finite number".into()),
+            None => return ToolResult::error("Missing required parameter 'x'".into()),
+        };
+        let y = match parse_number(&input, "y") {
+            Some(v) if v.is_finite() => v.round() as i32,
+            Some(_) => return ToolResult::error("'y' must be a finite number".into()),
+            None => return ToolResult::error("Missing required parameter 'y'".into()),
+        };
+        let timeout_secs = parse_timeout_secs(&input);
+
+        run_desktop_operation(timeout_secs, move || platform::mouse_move(x, y)).await
+    }
+}
+
+#[async_trait]
+impl Tool for GetMousePositionTool {
+    fn name(&self) -> &str {
+        "get_mouse_position"
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "get_mouse_position".into(),
+            description: "Get the current mouse cursor position in absolute screen coordinates."
+                .into(),
+            input_schema: schema_object(
+                json!({
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Timeout in seconds (default: 30)"
+                    }
+                }),
+                &[],
+            ),
+        }
+    }
+
+    async fn execute(&self, input: serde_json::Value) -> ToolResult {
+        let timeout_secs = parse_timeout_secs(&input);
+        run_desktop_operation(timeout_secs, platform::get_mouse_position).await
     }
 }
 
