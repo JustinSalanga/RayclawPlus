@@ -832,6 +832,20 @@ impl Database {
         }
     }
 
+    pub fn get_chat_title(&self, chat_id: i64) -> Result<Option<String>, RayClawError> {
+        let conn = self.lock_conn();
+        let result = conn.query_row(
+            "SELECT chat_title FROM chats WHERE chat_id = ?1",
+            params![chat_id],
+            |row| row.get::<_, Option<String>>(0),
+        );
+        match result {
+            Ok(v) => Ok(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub fn get_chat_external_id(&self, chat_id: i64) -> Result<Option<String>, RayClawError> {
         let conn = self.lock_conn();
         let result = conn.query_row(

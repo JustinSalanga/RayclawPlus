@@ -282,6 +282,7 @@ fn apply_channel_secret(
 }
 
 /// Store a user message in the database (since we use AppState directly, not SDK).
+/// If the chat title is still "New Chat" (or empty), set it to a short summary from the first user message.
 fn store_user_message(
     state: &AppState,
     chat_id: i64,
@@ -301,9 +302,28 @@ fn store_user_message(
         attachment_paths: attachment_paths.map(String::from),
     };
     let _ = state.db.store_message(&msg);
+    // Summarize title from first message when still default
+    if let Ok(Some(current_title)) = state.db.get_chat_title(chat_id) {
+        let trim = current_title.trim();
+        if trim.is_empty() || trim.eq_ignore_ascii_case("New Chat") {
+            let summary: String = text
+                .trim()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .take(50)
+                .collect();
+            let summary = summary.trim();
+            if !summary.is_empty() {
+                let _ = state.db.upsert_chat(chat_id, Some(summary), "desktop");
+            }
+        }
+    }
 }
 
-/// Store a bot response in the database.
+/// Store a bot response in the database and refresh the chat's last_message_time for the sidebar.
 fn store_bot_message(state: &AppState, chat_id: i64, text: &str) {
     let msg = rayclaw::db::StoredMessage {
         id: uuid::Uuid::new_v4().to_string(),
@@ -315,6 +335,7 @@ fn store_bot_message(state: &AppState, chat_id: i64, text: &str) {
         attachment_paths: None,
     };
     let _ = state.db.store_message(&msg);
+    let _ = state.db.upsert_chat(chat_id, None, "desktop");
 }
 
 // ---------------------------------------------------------------------------

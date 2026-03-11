@@ -1,0 +1,3 @@
+# Ignore agent-browser debug logs so tauri dev doesn't rebuild
+src-tauri/resources/agent-browser/ms-playwright/**/debug.log
+*.log

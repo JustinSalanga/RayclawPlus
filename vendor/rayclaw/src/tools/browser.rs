@@ -588,19 +588,62 @@ impl Tool for BrowserTool {
             match wait_result {
                 Ok(Ok(status)) => {
                     let exit_code = status.code().unwrap_or(-1);
-                    let result_text = format_output(
+                    let raw_text = format_output(
                         &stdout_bytes,
                         &stderr_bytes,
                         &format!("Command completed with exit code {exit_code}"),
                     );
-
-                    if exit_code == 0 {
-                        return ToolResult::success(result_text).with_status_code(exit_code);
+                    // Normalize a few known, noisy but harmless lines to keep the UI output
+                    // focused on actionable information.
+                    let cleaned_text = raw_text
+                        .lines()
+                        .filter(|line| {
+                            // agent-browser prints this when a daemon is already running with a
+                            // different profile; it does not represent a failure for our tool.
+                            !line.contains("--profile ignored: daemon already running")
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let result_text = if cleaned_text.trim().is_empty() {
+                        raw_text
                     } else {
+                        cleaned_text
+                    };
+
+                    // Soft-timeout handling: when agent-browser reports a Playwright page.goto
+                    // timeout for an `open` command, the page is often still partially loaded
+                    // and subsequent commands (`wait --load networkidle`, `snapshot -i`) can
+                    // succeed. Treat this as a soft timeout instead of a hard tool failure.
+                    if exit_code != 0 {
+                        let is_open = args
+                            .get(2)
+                            .map(|verb| verb == "open" || verb == "goto" || verb == "navigate")
+                            .unwrap_or(false);
+                        let is_goto_timeout = result_text
+                            .contains("page.goto: Timeout 25000ms exceeded")
+                            || result_text.contains("Timeout 25000ms exceeded.");
+
+                        if is_open && is_goto_timeout {
+                            let mut message = String::new();
+                            message.push_str(
+                                "Browser navigation hit page.goto timeout (Playwright internal 25000ms), \
+but the session remains usable.\n",
+                            );
+                            message.push_str(
+                                "You can usually continue with `wait --load networkidle` or `snapshot -i`.\n\n",
+                            );
+                            message.push_str(&result_text);
+                            return ToolResult::success(message)
+                                .with_status_code(0)
+                                .with_error_type("soft_timeout");
+                        }
+
                         return ToolResult::error(format!("Exit code {exit_code}\n{result_text}"))
                             .with_status_code(exit_code)
                             .with_error_type("process_exit");
                     }
+
+                    return ToolResult::success(result_text).with_status_code(exit_code);
                 }
                 Ok(Err(e)) => {
                     let partial = format_output(

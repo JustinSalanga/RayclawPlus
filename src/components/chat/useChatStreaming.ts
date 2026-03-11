@@ -177,6 +177,7 @@ export function useChatStreaming({
               lastStreamResponseMessageId,
             };
           });
+          onTitleChanged?.();
           break;
         }
       }
@@ -253,6 +254,7 @@ export function useChatStreaming({
           message.userText,
           message.attachmentDtos && message.attachmentDtos.length > 0 ? message.attachmentDtos : undefined,
         );
+        onTitleChanged?.();
       } catch (err) {
         clearStreamTimeout(targetChatId);
         updateChatRuntimeState(targetChatId, (state) => ({
@@ -269,6 +271,7 @@ export function useChatStreaming({
       appendMessageToTimeline,
       chatRuntimeStates,
       clearStreamTimeout,
+      onTitleChanged,
       resetStreamTimeout,
       updateChatRuntimeState,
     ],

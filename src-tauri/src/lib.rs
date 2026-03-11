@@ -148,6 +148,13 @@ fn configure_agent_browser_env(app: &tauri::AppHandle) {
         if browsers_path.exists() {
             std::env::set_var("PLAYWRIGHT_BROWSERS_PATH", &browsers_path);
         }
+        // Chromium's headless shell writes a debug.log next to the executable by
+        // default, which in our case lives under src-tauri/resources. That file
+        // change causes Tauri's dev watcher to rebuild the app on every browser
+        // command. Redirect the log to the OS temp directory so it no longer
+        // touches the project tree.
+        let chrome_log = std::env::temp_dir().join("rayclaw-browser-debug.log");
+        std::env::set_var("CHROME_LOG_FILE", &chrome_log);
     }
 
     info!(
