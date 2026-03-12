@@ -23,6 +23,7 @@ pub mod web_fetch;
 pub mod web_html;
 pub mod web_search;
 pub mod write_file;
+pub mod zip;
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -396,6 +397,14 @@ impl ToolRegistry {
             Box::new(structured_memory::StructuredMemoryUpdateTool::new(
                 db.clone(),
             )),
+            Box::new(zip::ZipTool::new_with_isolation(
+                &config.working_dir,
+                config.working_dir_isolation,
+            )),
+            Box::new(zip::UnzipTool::new_with_isolation(
+                &config.working_dir,
+                config.working_dir_isolation,
+            )),
         ];
         ToolRegistry {
             tools,
@@ -477,6 +486,14 @@ impl ToolRegistry {
             Box::new(structured_memory::StructuredMemoryUpdateTool::new(
                 db.clone(),
             )),
+            Box::new(zip::ZipTool::new_with_isolation(
+                &config.working_dir,
+                config.working_dir_isolation,
+            )),
+            Box::new(zip::UnzipTool::new_with_isolation(
+                &config.working_dir,
+                config.working_dir_isolation,
+            )),
         ];
         ToolRegistry {
             tools,
@@ -539,6 +556,14 @@ impl ToolRegistry {
             Box::new(web_search::WebSearchTool),
             Box::new(activate_skill::ActivateSkillTool::new(&skills_data_dir)),
             Box::new(structured_memory::StructuredMemorySearchTool::new(db)),
+            Box::new(zip::ZipTool::new_with_isolation(
+                &config.working_dir,
+                config.working_dir_isolation,
+            )),
+            Box::new(zip::UnzipTool::new_with_isolation(
+                &config.working_dir,
+                config.working_dir_isolation,
+            )),
         ];
         ToolRegistry {
             tools,

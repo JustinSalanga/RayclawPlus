@@ -4,7 +4,23 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Copy, Check, Bot, ChevronDown, ChevronUp, FileDown, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
+import {
+  Copy,
+  Check,
+  Bot,
+  ChevronDown,
+  ChevronUp,
+  FileDown,
+  RotateCcw,
+  X,
+  ZoomIn,
+  ZoomOut,
+  FileText,
+  FileCode2,
+  FileArchive,
+  FileAudio2,
+  FileVideo2,
+} from "lucide-react";
 import type { StoredMessage } from "../types";
 
 function formatDuration(ms: number): string {
@@ -155,7 +171,7 @@ function extractAttachmentMediaReferences(message: StoredMessage): MediaReferenc
   const previews = message.attachmentPreviews ?? [];
 
   return previews.reduce<MediaReference[]>((media, preview) => {
-    if (!preview.type.startsWith("image/")) {
+    if (!preview.type.startsWith("image/") || !preview.dataUrl) {
       return media;
     }
 
@@ -351,9 +367,9 @@ function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry, respon
   const imagePreviewZoomAnimationRef = useRef<number | null>(null);
   const imagePreviewZoomAnchorRef = useRef<ZoomAnchor | null>(null);
   const attachmentMediaReferences = useMemo(() => extractAttachmentMediaReferences(message), [message]);
-  // User messages show attachment previews in a separate media stack
+  // User messages show image attachment previews in a separate media stack
   const mediaReferences = useMemo(
-    () => isBot ? [] : attachmentMediaReferences,
+    () => (isBot ? [] : attachmentMediaReferences),
     [isBot, attachmentMediaReferences],
   );
   const botContentWithInlineMedia = useMemo(() => {
@@ -717,6 +733,46 @@ function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry, respon
               {mediaReferences.map((media) => (
                 <InlineMedia key={media.original} media={media} onImagePreview={handleOpenImagePreview} />
               ))}
+            </div>
+          )}
+          {message.attachmentPreviews && message.attachmentPreviews.length > 0 && !isBot && (
+            <div className="message-attachments-list">
+              {message.attachmentPreviews
+                .filter((att) => !att.type.startsWith("image/"))
+                .map((att) => {
+                  const lowerName = att.name.toLowerCase();
+                  const isAudio =
+                    att.type.startsWith("audio/") ||
+                    /\.(mp3|wav|ogg|m4a|flac|aac|opus)$/.test(lowerName);
+                  const isVideo =
+                    att.type.startsWith("video/") ||
+                    /\.(mp4|webm|mov|m4v|avi|mkv)$/.test(lowerName);
+                  const isArchive =
+                    /\.(zip|rar|7z|tar|gz|tgz|bz2)$/.test(lowerName);
+                  const isCode =
+                    att.type === "text/x-python" ||
+                    att.type === "text/x-typescript" ||
+                    att.type === "text/x-javascript" ||
+                    /\.(ts|tsx|js|jsx|py|rs|go|java|cs|cpp|c|h|hpp|rb|php|sh|ps1|sql|json|yml|yaml|toml|ini|cfg|conf|md|log)$/.test(
+                      lowerName,
+                    );
+                  const isText =
+                    att.type.startsWith("text/") || /\.(txt|doc|docx|xls|xlsx|ppt|pptx|pdf)$/.test(lowerName);
+
+                  let Icon = FileText;
+                  if (isArchive) Icon = FileArchive;
+                  else if (isAudio) Icon = FileAudio2;
+                  else if (isVideo) Icon = FileVideo2;
+                  else if (isCode) Icon = FileCode2;
+                  else if (isText) Icon = FileText;
+
+                  return (
+                    <div key={att.name} className="message-attachment-chip">
+                      <Icon size={24} className="message-attachment-icon" />
+                      <span className="message-attachment-name">{att.name}</span>
+                    </div>
+                  );
+                })}
             </div>
           )}
           {isBot ? (

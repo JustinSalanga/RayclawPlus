@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { X, Plus, Paperclip, Brain, Maximize2 } from "lucide-react";
+import { X, Plus, Paperclip, Brain, Maximize2, FileText, FileCode2, FileArchive, FileAudio2, FileVideo2 } from "lucide-react";
 import type { QueuedMessage } from "./chatTypes";
 import type { FileAttachment } from "./chatTypes";
 
@@ -24,6 +24,10 @@ export interface ChatComposerProps {
   isInputModalOpen: boolean;
   setIsInputModalOpen: (open: boolean) => void;
   onModalKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  /** Files skipped because they exceed max size; show notice and dismiss handler */
+  oversizedFileNames?: string[];
+  onDismissOversizedNotice?: () => void;
+  maxAttachmentSizeMB?: number;
 }
 
 export function ChatComposer({
@@ -47,6 +51,9 @@ export function ChatComposer({
   isInputModalOpen,
   setIsInputModalOpen,
   onModalKeyDown,
+  oversizedFileNames = [],
+  onDismissOversizedNotice,
+  maxAttachmentSizeMB = 20,
 }: ChatComposerProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -69,21 +76,77 @@ export function ChatComposer({
 
   return (
     <>
+      {oversizedFileNames.length > 0 && (
+        <div className="attachment-size-notice" role="alert">
+          <span className="attachment-size-notice-text">
+            {oversizedFileNames.length === 1
+              ? `"${oversizedFileNames[0]}" is over ${maxAttachmentSizeMB} MB and was not attached.`
+              : `${oversizedFileNames.length} files over ${maxAttachmentSizeMB} MB were not attached: ${oversizedFileNames.slice(0, 3).join(", ")}${oversizedFileNames.length > 3 ? ` and ${oversizedFileNames.length - 3} more` : ""}.`}
+          </span>
+          {onDismissOversizedNotice && (
+            <button
+              type="button"
+              className="attachment-size-notice-dismiss"
+              onClick={onDismissOversizedNotice}
+              aria-label="Dismiss"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      )}
       {attachments.length > 0 && (
         <div className="attachment-preview-bar">
-          {attachments.map((att, i) => (
-            <div key={i} className="attachment-preview">
-              <img src={att.dataUrl} alt={att.name} className="attachment-thumb" />
-              <span className="attachment-name">{att.name}</span>
-              <button
-                className="attachment-remove"
-                onClick={() => removeAttachment(i)}
-                type="button"
-              >
-                <X size={12} />
-              </button>
-            </div>
-          ))}
+          {attachments.map((att, i) => {
+            const isImage = att.type?.startsWith("image/");
+            const lowerName = att.name.toLowerCase();
+            const isAudio =
+              att.type?.startsWith("audio/") ||
+              /\.(mp3|wav|ogg|m4a|flac|aac|opus)$/.test(lowerName);
+            const isVideo =
+              att.type?.startsWith("video/") ||
+              /\.(mp4|webm|mov|m4v|avi|mkv)$/.test(lowerName);
+            const isArchive =
+              /\.(zip|rar|7z|tar|gz|tgz|bz2)$/.test(lowerName);
+            const isCode =
+              att.type === "text/x-python" ||
+              att.type === "text/x-typescript" ||
+              att.type === "text/x-javascript" ||
+              /\.(ts|tsx|js|jsx|py|rs|go|java|cs|cpp|c|h|hpp|rb|php|sh|ps1|sql|json|yml|yaml|toml|ini|cfg|conf|md|log)$/.test(
+                lowerName,
+              );
+            const isText =
+              att.type?.startsWith("text/") || /\.(txt|doc|docx|xls|xlsx|ppt|pptx|pdf)$/.test(lowerName);
+
+            let Icon = Paperclip;
+            if (!isImage) {
+              if (isArchive) Icon = FileArchive;
+              else if (isAudio) Icon = FileAudio2;
+              else if (isVideo) Icon = FileVideo2;
+              else if (isCode) Icon = FileCode2;
+              else if (isText) Icon = FileText;
+            }
+
+            return (
+              <div key={i} className="attachment-preview">
+                {isImage && att.dataUrl ? (
+                  <img src={att.dataUrl} alt={att.name} className="attachment-thumb" />
+                ) : (
+                  <div className="attachment-thumb attachment-thumb-file">
+                    <Icon size={24} color="gray" />
+                  </div>
+                )}
+                <span className="attachment-name">{att.name}</span>
+                <button
+                  className="attachment-remove"
+                  onClick={() => removeAttachment(i)}
+                  type="button"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
       <div className="chat-composer">
@@ -101,7 +164,6 @@ export function ChatComposer({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
             multiple
             style={{ display: "none" }}
             onChange={(e) => {

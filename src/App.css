@@ -2286,6 +2286,20 @@ body {
   margin: 8px 0;
 }
 
+.message-attachment-chip {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  padding: 10px;
+  margin-bottom: 10px;
+  width: max-content;
+}
+
+.message-attachment-name {
+  margin-left: 10px;
+}
+
 .message-media-stack {
   display: grid;
   gap: 10px;
@@ -2661,6 +2675,36 @@ body {
   outline-offset: -4px;
 }
 
+.attachment-size-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 32px;
+  background: var(--paper-warm);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--charcoal-light);
+}
+
+.attachment-size-notice-text {
+  flex: 1;
+}
+
+.attachment-size-notice-dismiss {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.attachment-size-notice-dismiss:hover {
+  color: var(--charcoal);
+  background: var(--border);
+}
+
 .attachment-preview-bar {
   display: flex;
   gap: 8px;
@@ -2688,6 +2732,13 @@ body {
   height: 32px;
   object-fit: cover;
   border-radius: 4px;
+}
+
+.attachment-thumb-file {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--charcoal-light);
 }
 
 .attachment-name {

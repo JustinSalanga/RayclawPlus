@@ -3,22 +3,35 @@ import { saveAttachmentFile } from "../../lib/tauri-api";
 import { MAX_ATTACHMENT_SIZE } from "./chatTypes";
 import type { FileAttachment } from "./chatTypes";
 
+const MAX_ATTACHMENT_SIZE_MB = Math.round(MAX_ATTACHMENT_SIZE / (1024 * 1024));
+
 export function useAttachments(isReadOnly: boolean, chatId: number | null) {
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [oversizedFileNames, setOversizedFileNames] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processFiles = useCallback((files: File[]) => {
+    const accepted: File[] = [];
+    const oversized: string[] = [];
     for (const file of files) {
-      if (!file.type.startsWith("image/")) continue;
-      if (file.size > MAX_ATTACHMENT_SIZE) continue;
+      if (file.size > MAX_ATTACHMENT_SIZE) {
+        oversized.push(file.name);
+      } else {
+        accepted.push(file);
+      }
+    }
+    if (oversized.length > 0) {
+      setOversizedFileNames((prev) => [...prev, ...oversized]);
+    }
+    for (const file of accepted) {
       const reader = new FileReader();
       reader.onload = () => {
         setAttachments((prev) => [
           ...prev,
           {
             name: file.name,
-            type: file.type,
+            type: file.type || "application/octet-stream",
             dataUrl: reader.result as string,
             size: file.size,
           },
@@ -26,6 +39,10 @@ export function useAttachments(isReadOnly: boolean, chatId: number | null) {
       };
       reader.readAsDataURL(file);
     }
+  }, []);
+
+  const clearOversizedNotice = useCallback(() => {
+    setOversizedFileNames([]);
   }, []);
 
   const handleDragOver = useCallback(
@@ -56,7 +73,11 @@ export function useAttachments(isReadOnly: boolean, chatId: number | null) {
         e.preventDefault();
         for (const item of imageItems) {
           const file = item.getAsFile();
-          if (!file || !file.type.startsWith("image/") || file.size > MAX_ATTACHMENT_SIZE) continue;
+          if (!file || !file.type.startsWith("image/")) continue;
+          if (file.size > MAX_ATTACHMENT_SIZE) {
+            setOversizedFileNames((prev) => [...prev, file.name]);
+            continue;
+          }
           (async () => {
             const dataUrl = await new Promise<string>((resolve, reject) => {
               const reader = new FileReader();
@@ -99,5 +120,8 @@ export function useAttachments(isReadOnly: boolean, chatId: number | null) {
     handleDrop,
     handlePaste,
     removeAttachment,
+    oversizedFileNames,
+    clearOversizedNotice,
+    maxAttachmentSizeMB: MAX_ATTACHMENT_SIZE_MB,
   };
 }

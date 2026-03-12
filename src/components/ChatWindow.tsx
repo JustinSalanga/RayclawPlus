@@ -120,6 +120,9 @@ export default function ChatWindow({
     handleDrop,
     handlePaste,
     removeAttachment,
+    oversizedFileNames,
+    clearOversizedNotice,
+    maxAttachmentSizeMB,
   } = attachmentsApi;
 
   const soul = useSoulEditor(chatId);
@@ -139,7 +142,8 @@ export default function ChatWindow({
     setSearchOpen(false);
     setAttachments([]);
     setSoulOpen(false);
-  }, [chatId, setAttachments, setSearchOpen, setSoulOpen]);
+    clearOversizedNotice();
+  }, [chatId, setAttachments, setSearchOpen, setSoulOpen, clearOversizedNotice]);
 
   useEffect(() => {
     getConfig()
@@ -157,20 +161,29 @@ export default function ChatWindow({
         const withPreviews = await Promise.all(
           msgs.map(async (m) => {
             if (!m.attachment_paths?.length) return m;
-            const previews = await Promise.all(
+            const previews = await Promise.all<
+              { name: string; type: string; dataUrl: string; path?: string } | null
+            >(
               m.attachment_paths.map(async (p) => {
+                const isImage = p.media_type.startsWith("image/");
+                if (!isImage) {
+                  return { name: p.name, type: p.media_type, dataUrl: "", path: p.path };
+                }
                 try {
                   const dataUrl = await readAttachmentAsDataUrl(p.path);
-                  return { name: p.name, type: p.media_type, dataUrl };
+                  return { name: p.name, type: p.media_type, dataUrl, path: p.path };
                 } catch {
                   return null;
                 }
               }),
             );
-            const attachmentPreviews = previews.filter(
-              (p): p is { name: string; type: string; dataUrl: string } => p != null && p.dataUrl !== "",
-            );
-            return { ...m, attachmentPreviews };
+            const attachmentPreviews = previews.filter((p): p is {
+              name: string;
+              type: string;
+              dataUrl: string;
+              path?: string;
+            } => p !== null);
+            return { ...m, attachmentPreviews: attachmentPreviews as StoredMessage["attachmentPreviews"] };
           }),
         );
         setMessages((prev) => mergeMessagesWithAttachmentPreviews(withPreviews, prev));
@@ -286,26 +299,26 @@ export default function ChatWindow({
     if ((!input.trim() && attachments.length === 0) || !chatId) return;
     const userText = input.trim();
     const currentAttachments = [...attachments];
-    const attachmentDtos = currentAttachments
-      .filter((a) => a.type.startsWith("image/"))
-      .map((a) =>
-        a.path
-          ? { path: a.path, data: "", media_type: a.type, name: a.name }
-          : {
-              data: a.dataUrl.split(",")[1] || "",
-              media_type: a.type,
-              name: a.name,
-            },
-      );
-    const attachmentPreviews = currentAttachments.map(({ name, type, dataUrl }) => ({
+    const attachmentDtos = currentAttachments.map((a) =>
+      a.path
+        ? { path: a.path, data: "", media_type: a.type, name: a.name }
+        : {
+            data: a.dataUrl.split(",")[1] || "",
+            media_type: a.type,
+            name: a.name,
+          },
+    );
+    const hasImageAttachment = currentAttachments.some((a) => a.type.startsWith("image/"));
+    const attachmentPreviews = currentAttachments.map(({ name, type, dataUrl, path }) => ({
       name,
       type,
       dataUrl,
+      path,
     }));
     const displayText =
-      attachmentDtos.length > 0 && userText
+      hasImageAttachment && userText
         ? `[image] ${userText}`
-        : attachmentDtos.length > 0
+        : hasImageAttachment
           ? "[image]"
           : userText;
     const outgoing: QueuedMessage = {
@@ -555,6 +568,9 @@ export default function ChatWindow({
         isInputModalOpen={isInputModalOpen}
         setIsInputModalOpen={setIsInputModalOpen}
         onModalKeyDown={handleModalKeyDown}
+        oversizedFileNames={oversizedFileNames}
+        onDismissOversizedNotice={clearOversizedNotice}
+        maxAttachmentSizeMB={maxAttachmentSizeMB}
       />
     </main>
   );

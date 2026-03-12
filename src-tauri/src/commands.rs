@@ -860,9 +860,16 @@ pub async fn send_message(
                     .iter()
                     .enumerate()
                     .map(|(i, (bytes, media_type, name))| {
-                        let ext = extension_from_media_type(media_type);
+                        // Prefer the original file extension from the name; fall back to media-type-based one.
+                        let original_ext = std::path::Path::new(name)
+                            .extension()
+                            .and_then(|s| s.to_str())
+                            .map(|s| s.to_lowercase());
+                        let fallback_ext = extension_from_media_type(media_type);
+                        let ext = original_ext.as_deref().unwrap_or(fallback_ext);
                         let ts = chrono::Local::now().format("%Y%m%d_%H%M%S_%3f");
-                        let safe_name = name.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_' && c != '.', "_");
+                        let safe_name = name
+                            .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_' && c != '.', "_");
                         let filename = format!("{safe_name}_{ts}_{i}.{ext}");
                         let attachments_dir = Path::new(&data_dir)
                             .join("groups")
@@ -900,6 +907,32 @@ pub async fn send_message(
             content.clone()
         };
 
+        // Build content sent to the LLM, including attached file metadata so tools can access them.
+        let llm_content = if let Some(ref paths_json) = attachment_paths_json {
+            if let Ok(items) = serde_json::from_str::<Vec<AttachmentPathDto>>(paths_json) {
+                if !items.is_empty() {
+                    let mut summary_lines = Vec::with_capacity(items.len());
+                    for item in &items {
+                        summary_lines.push(format!(
+                            "- {} ({}): {}",
+                            item.name, item.media_type, item.path
+                        ));
+                    }
+                    let summary = summary_lines.join("\n");
+                    format!(
+                        "User attached the following files:\n{}\n\n{}",
+                        summary, content
+                    )
+                } else {
+                    content.clone()
+                }
+            } else {
+                content.clone()
+            }
+        } else {
+            content.clone()
+        };
+
         // Store user message with attachment paths
         store_user_message(
             &state,
@@ -919,7 +952,7 @@ pub async fn send_message(
         let result = rayclaw::agent_engine::process_with_agent_with_events(
             &state,
             context,
-            Some(&content),
+            Some(&llm_content),
             image_data,
             Some(&tx),
         )
@@ -1035,7 +1068,13 @@ pub async fn save_attachment_file(
         None => Path::new(&data_dir).join("uploads"),
     };
     std::fs::create_dir_all(&uploads_dir).map_err(|e| e.to_string())?;
-    let ext = extension_from_media_type(&media_type);
+    // Prefer extension from original name; fall back to media-type-based one.
+    let original_ext = std::path::Path::new(&name)
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase());
+    let fallback_ext = extension_from_media_type(&media_type);
+    let ext = original_ext.as_deref().unwrap_or(fallback_ext);
     let ts = chrono::Local::now().format("%Y%m%d_%H%M%S_%3f");
     let safe_name = name
         .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_' && c != '.', "_");

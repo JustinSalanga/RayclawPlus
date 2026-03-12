@@ -63,6 +63,8 @@ export interface StoredMessage {
     name: string;
     type: string;
     dataUrl: string;
+    /** Optional original file path when available (for non-image attachments). */
+    path?: string;
   }[];
   /** Persisted paths from backend (get_history returns this as attachment_paths). */
   attachment_paths?: { path: string; name: string; media_type: string }[];
