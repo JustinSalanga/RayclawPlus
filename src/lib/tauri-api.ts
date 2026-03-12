@@ -179,3 +179,8 @@ export async function deleteScheduledTask(taskId: number): Promise<boolean> {
 export async function getTaskRunLogs(taskId: number): Promise<TaskRunLogDto[]> {
   return invoke("get_task_run_logs", { taskId });
 }
+
+// Notifications
+export async function notifyTask(title: string, body: string): Promise<void> {
+  return invoke("notify_task", { title, body });
+}

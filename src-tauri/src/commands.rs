@@ -1707,6 +1707,26 @@ fn extract_skill_body(raw: &str) -> String {
     trimmed.to_string()
 }
 
+// ---------------------------------------------------------------------------
+// Commands: Notifications
+// ---------------------------------------------------------------------------
+
+use tauri_plugin_notification::NotificationExt;
+
+#[tauri::command]
+pub async fn notify_task(
+    app: tauri::AppHandle,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn new_chat(app: tauri::AppHandle) -> Result<i64, String> {
     let desktop = app.state::<DesktopState>();

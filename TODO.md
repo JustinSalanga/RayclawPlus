@@ -1,5 +1,5 @@
 Add new features.
-1. System notification
+1. System tray notification popup
 - When the app loses focus, if the task is completed, send notification.
 - When the scheduler runs, send notification.
 - If the user clicks notification balloon, show the chat.

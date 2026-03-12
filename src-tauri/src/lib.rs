@@ -678,6 +678,8 @@ pub fn run() {
             commands::update_task_status,
             commands::delete_scheduled_task,
             commands::get_task_run_logs,
+            // Notifications
+            commands::notify_task,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

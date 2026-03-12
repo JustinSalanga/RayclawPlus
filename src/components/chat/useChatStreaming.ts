@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { sendMessage, onAgentStream } from "../../lib/tauri-api";
 import type { Attachment } from "../../lib/tauri-api";
 import type { StoredMessage, AgentStreamEvent } from "../../types";
@@ -91,49 +92,30 @@ export function useChatStreaming({
     [setMessages],
   );
 
-  // Dispatch a DOM event so the app can switch to the relevant chat when the
-  // user clicks a system notification.
-  const dispatchNotificationClick = useCallback((targetChatId: number) => {
-    if (typeof window === "undefined") return;
-    window.dispatchEvent(
-      new CustomEvent("rayclaw-open-chat", {
-        detail: { chatId: targetChatId },
-      }),
-    );
-  }, []);
-
-  // Show a native/system notification when a response finishes while the app
-  // is in the background.
+  // Show a native OS notification (via Tauri plugin) when a response finishes
+  // while the app is not focused.
   const showSystemNotification = useCallback(
-    (targetChatId: number, title: string | null, body: string) => {
-      if (typeof window === "undefined" || !("Notification" in window)) return;
+    async (_targetChatId: number, title: string | null, body: string) => {
       const trimmed = body.trim();
       if (!trimmed) return;
+
+      let granted = await isPermissionGranted();
+      if (!granted) {
+        const perm = await requestPermission();
+        granted = perm === "granted";
+      }
+      if (!granted) return;
 
       const notificationTitle = title ?? "VirusClaw";
       const preview =
         trimmed.length > 160 ? `${trimmed.slice(0, 157).trimEnd()}…` : trimmed;
 
-      const create = () => {
-        const notification = new Notification(notificationTitle, {
-          body: preview,
-        });
-        notification.onclick = () => {
-          window.focus();
-          dispatchNotificationClick(targetChatId);
-          notification.close();
-        };
-      };
-
-      if (Notification.permission === "granted") {
-        create();
-      } else if (Notification.permission !== "denied") {
-        Notification.requestPermission().then((perm) => {
-          if (perm === "granted") create();
-        });
-      }
+      await sendNotification({
+        title: notificationTitle,
+        body: preview,
+      });
     },
-    [dispatchNotificationClick],
+    [],
   );
 
   useEffect(() => {
@@ -205,12 +187,12 @@ export function useChatStreaming({
             appendMessageToTimeline(botMessage);
           }
 
-          // If the app is in the background when the response finishes, send a
+          // If the app is not focused when the response finishes, send a
           // system notification for the completed task.
           const isBackground =
-            typeof document !== "undefined" && document.hidden;
+            typeof document !== "undefined" && !document.hasFocus();
           if (isBackground && content) {
-            showSystemNotification(eventChatId, chatTitle, content);
+            void showSystemNotification(eventChatId, chatTitle, content);
           }
           updateChatRuntimeState(eventChatId, (state) => {
             const started = state.streamStartedAt ?? Date.now();
