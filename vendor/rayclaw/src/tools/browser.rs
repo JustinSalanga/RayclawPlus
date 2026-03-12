@@ -460,6 +460,8 @@ impl Tool for BrowserTool {
             args.push(path.to_string_lossy().to_string());
         }
 
+        let chat_id_for_cleanup = auth.as_ref().map(|auth| auth.caller_chat_id);
+
         let mut command_args = match split_browser_command(command) {
             Ok(parts) if !parts.is_empty() => parts,
             Ok(_) => return ToolResult::error("Empty browser command".into()),
@@ -684,16 +686,25 @@ but the session remains usable.\n",
                                 "You can usually continue with `wait --load networkidle` or `snapshot -i`.\n\n",
                             );
                             message.push_str(&result_text);
+                            if let Some(cid) = chat_id_for_cleanup {
+                                Self::close_session(cid).await;
+                            }
                             return ToolResult::success(message)
                                 .with_status_code(0)
                                 .with_error_type("soft_timeout");
                         }
 
+                        if let Some(cid) = chat_id_for_cleanup {
+                            Self::close_session(cid).await;
+                        }
                         return ToolResult::error(format!("Exit code {exit_code}\n{result_text}"))
                             .with_status_code(exit_code)
                             .with_error_type("process_exit");
                     }
 
+                    if let Some(cid) = chat_id_for_cleanup {
+                        Self::close_session(cid).await;
+                    }
                     return ToolResult::success(result_text).with_status_code(exit_code);
                 }
                 Ok(Err(e)) => {
@@ -702,6 +713,9 @@ but the session remains usable.\n",
                         &stderr_bytes,
                         "(no output captured)",
                     );
+                    if let Some(cid) = chat_id_for_cleanup {
+                        Self::close_session(cid).await;
+                    }
                     return ToolResult::error(format!(
                         "Failed to wait on browser command via {} ({}): {e}\n{partial}",
                         candidate.program, candidate.source

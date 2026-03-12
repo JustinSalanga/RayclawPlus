@@ -556,6 +556,7 @@ pub fn run() {
             commands::get_status,
             commands::get_config,
             commands::save_config,
+            commands::set_show_thinking,
             commands::get_channel_status,
             commands::toggle_channel,
             commands::send_message,

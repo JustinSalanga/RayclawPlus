@@ -7,11 +7,22 @@ import remarkGfm from "remark-gfm";
 import { Copy, Check, Bot, ChevronDown, ChevronUp, FileDown, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import type { StoredMessage } from "../types";
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const sec = Math.round(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s > 0 ? `${min}m ${s}s` : `${min}m`;
+}
+
 interface MessageBubbleProps {
   message: StoredMessage;
   isSearchMatch?: boolean;
   isCurrentMatch?: boolean;
   onRetry?: (message: StoredMessage) => void;
+  /** Total elapsed time in ms for this response (shown in footer when set). */
+  responseDurationMs?: number;
 }
 
 type MediaKind = "image" | "audio" | "video" | "pdf";
@@ -316,7 +327,7 @@ function messageFilename(message: StoredMessage) {
   return `${sender}-${stamp}.md`;
 }
 
-function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry }: MessageBubbleProps) {
+function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry, responseDurationMs }: MessageBubbleProps) {
   const isBot = message.is_from_bot;
   const time = new Date(message.timestamp).toLocaleTimeString([], {
     hour: "2-digit",
@@ -742,7 +753,12 @@ function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry }: Mess
               </button>
             )}
           </div>
-          <span className="message-time">{time}</span>
+          <span className="message-time">
+            {time}
+            {responseDurationMs != null && responseDurationMs > 0 && (
+              <span className="message-time-elapsed"> · {formatDuration(responseDurationMs)}</span>
+            )}
+          </span>
         </div>
       </div>
       {imagePreview && (

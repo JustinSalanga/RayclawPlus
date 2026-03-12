@@ -14,6 +14,10 @@ export async function saveConfig(config: ConfigDto): Promise<void> {
   return invoke("save_config", { config });
 }
 
+export async function setShowThinking(enabled: boolean): Promise<void> {
+  return invoke("set_show_thinking", { enabled });
+}
+
 export async function getChannelStatus(): Promise<ChannelStatus[]> {
   return invoke("get_channel_status");
 }

@@ -1,4 +1,5 @@
-import { X, Paperclip, Maximize2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { X, Plus, Paperclip, Brain, Maximize2 } from "lucide-react";
 import type { QueuedMessage } from "./chatTypes";
 import type { FileAttachment } from "./chatTypes";
 
@@ -6,6 +7,8 @@ export interface ChatComposerProps {
   isReadOnly: boolean;
   input: string;
   setInput: (value: string) => void;
+  showThinking: boolean;
+  onToggleThinking: (enabled: boolean) => void | Promise<void>;
   attachments: FileAttachment[];
   removeAttachment: (idx: number) => void;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -27,6 +30,8 @@ export function ChatComposer({
   isReadOnly,
   input,
   setInput,
+  showThinking,
+  onToggleThinking,
   attachments,
   removeAttachment,
   textareaRef,
@@ -43,6 +48,23 @@ export function ChatComposer({
   setIsInputModalOpen,
   onModalKeyDown,
 }: ChatComposerProps) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isMenuOpen) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(event.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isMenuOpen]);
+
   if (isReadOnly) return null;
 
   return (
@@ -84,17 +106,48 @@ export function ChatComposer({
             style={{ display: "none" }}
             onChange={(e) => {
               if (e.target.files) onProcessFiles(Array.from(e.target.files));
+              setIsMenuOpen(false);
               e.target.value = "";
             }}
           />
-          <button
-            className="btn-attach"
-            onClick={() => fileInputRef.current?.click()}
-            title="Attach image"
-            type="button"
+          <div
+            ref={menuRef}
+            className={`composer-dropdown${isMenuOpen ? " composer-dropdown-open" : ""}`}
           >
-            <Paperclip size={18} />
-          </button>
+            <button
+              className="btn-attach"
+              title="Add"
+              type="button"
+              onClick={() => setIsMenuOpen((open) => !open)}
+            >
+              <Plus size={18} />
+            </button>
+            <div className="composer-dropdown-menu" role="menu" aria-label="Composer actions">
+              <button
+                className="composer-dropdown-item"
+                onClick={() => fileInputRef.current?.click()}
+                type="button"
+                role="menuitem"
+              >
+                <Paperclip size={16} />
+                <span className="composer-dropdown-label">Add files</span>
+              </button>
+              <div className="composer-dropdown-item composer-dropdown-item-toggle" role="menuitem">
+                <div className="composer-dropdown-left">
+                  <Brain size={16} />
+                  <span className="composer-dropdown-label">Thinking</span>
+                </div>
+                <label className="channel-switch" title="Toggle thinking">
+                  <input
+                    type="checkbox"
+                    checked={showThinking}
+                    onChange={(e) => onToggleThinking(e.target.checked)}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              </div>
+            </div>
+          </div>
           <textarea
             ref={textareaRef}
             className="chat-input"

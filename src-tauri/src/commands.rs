@@ -563,6 +563,70 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
     Ok(())
 }
 
+#[tauri::command]
+pub async fn set_show_thinking(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    info!("set_show_thinking: enabled={enabled}");
+    let mut full_config = load_config_for_desktop();
+    full_config.show_thinking = enabled;
+
+    // Save to file
+    let save_path = rayclaw::config::Config::resolve_config_path()
+        .ok()
+        .flatten()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(default_config_path);
+    full_config.save_yaml(&save_path).map_err(|e| {
+        error!("set_show_thinking: failed to save: {e}");
+        format!("Failed to save config: {e}")
+    })?;
+    unsafe { std::env::set_var("RAYCLAW_CONFIG", &save_path) };
+
+    // Reinitialize agent + channels so the new config takes effect.
+    let desktop = app.state::<DesktopState>();
+
+    // Abort old channel tasks
+    {
+        let mut handles = desktop.channel_handles.lock().unwrap();
+        for (name, h) in handles.drain() {
+            h.abort();
+            info!("set_show_thinking: aborted channel task: {name}");
+        }
+    }
+
+    // Reinitialize agent + channels on stored runtime
+    let rt_handle = desktop.runtime.handle().clone();
+    let new_state = rt_handle
+        .spawn(async move { crate::init_agent(full_config).await })
+        .await
+        .map_err(|e| {
+            error!("set_show_thinking: spawn failed: {e}");
+            format!("Task failed: {e}")
+        })?
+        .map_err(|e| {
+            error!("set_show_thinking: agent init failed: {e}");
+            format!("Failed to initialize agent: {e}")
+        })?;
+
+    // Start channels (respecting enabled state)
+    let enabled_map = desktop.channel_enabled.lock().unwrap().clone();
+    let new_handles = crate::start_channels(&new_state, &rt_handle, &enabled_map);
+
+    {
+        let mut state_lock = desktop.app_state.write().await;
+        *state_lock = Some(new_state);
+    }
+    {
+        let mut err_lock = desktop.init_error.write().await;
+        *err_lock = None;
+    }
+    {
+        let mut handles = desktop.channel_handles.lock().unwrap();
+        *handles = new_handles;
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Commands: Channel Status
 // ---------------------------------------------------------------------------
@@ -845,9 +909,6 @@ pub async fn send_message(
             attachment_paths_json.as_deref(),
         );
 
-        // Close any stale browser daemon so the new turn starts headless
-        rayclaw::tools::browser::BrowserTool::close_session(chat_id).await;
-
         // Run agent
         debug!("send_message: starting agent for chat_id={chat_id}");
         let context = rayclaw::agent_engine::AgentRequestContext {
@@ -884,8 +945,6 @@ pub async fn send_message(
                 );
             }
         }
-
-        rayclaw::tools::browser::BrowserTool::close_session(chat_id).await;
 
         let _ = fwd.await;
         if let Some(desktop) = app_handle.try_state::<DesktopState>() {

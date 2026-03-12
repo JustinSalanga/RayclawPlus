@@ -593,6 +593,68 @@ body {
   cursor: not-allowed;
 }
 
+/* ---- Composer dropdown (+) ---- */
+
+.composer-dropdown {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.composer-dropdown-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  min-width: 200px;
+  padding: 6px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.12);
+  z-index: 50;
+  display: none;
+}
+
+.composer-dropdown-open .composer-dropdown-menu {
+  display: block;
+}
+
+.composer-dropdown-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 10px 10px;
+  border: none;
+  background: transparent;
+  color: var(--charcoal);
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
+.composer-dropdown-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.composer-dropdown-label {
+  flex: 1;
+  text-align: left;
+}
+
+.composer-dropdown-item-toggle {
+  cursor: default;
+  justify-content: space-between;
+}
+
+.composer-dropdown-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .btn-send {
   font-family: var(--font-sans);
   font-size: 13px;

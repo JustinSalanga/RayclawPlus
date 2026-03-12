@@ -3,7 +3,7 @@ use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::warn;
+use tracing::{info, warn};
 
 use std::collections::HashSet;
 
@@ -239,6 +239,7 @@ pub struct AnthropicProvider {
     model: String,
     max_tokens: u32,
     base_url: String,
+    think_enabled: bool,
 }
 
 impl AnthropicProvider {
@@ -249,6 +250,7 @@ impl AnthropicProvider {
             model: config.model.clone(),
             max_tokens: config.max_tokens,
             base_url: resolve_anthropic_messages_url(config.llm_base_url.as_deref().unwrap_or("")),
+            think_enabled: config.show_thinking,
         }
     }
 
@@ -673,6 +675,7 @@ impl LlmProvider for AnthropicProvider {
             messages,
             tools,
             stream: None,
+            think: Some(self.think_enabled),
         };
 
         let mut retries = 0u32;
@@ -736,6 +739,7 @@ impl LlmProvider for AnthropicProvider {
             messages,
             tools,
             stream: Some(true),
+            think: Some(self.think_enabled),
         };
 
         self.send_message_stream_single_pass(&request, text_tx)
@@ -756,6 +760,7 @@ pub struct OpenAiProvider {
     is_openai_codex: bool,
     chat_url: String,
     responses_url: String,
+    think_enabled: bool,
 }
 
 fn resolve_openai_compat_base(provider: &str, configured_base: &str) -> String {
@@ -802,6 +807,7 @@ impl OpenAiProvider {
             is_openai_codex,
             chat_url: format!("{}/chat/completions", base.trim_end_matches('/')),
             responses_url: format!("{}/responses", base.trim_end_matches('/')),
+            think_enabled: config.show_thinking,
         }
     }
 }
@@ -911,6 +917,7 @@ impl LlmProvider for OpenAiProvider {
             "model": self.model,
             "max_tokens": self.max_tokens,
             "messages": oai_messages,
+            "think": self.think_enabled,
         });
 
         if let Some(ref tool_defs) = tools {
@@ -997,6 +1004,7 @@ impl LlmProvider for OpenAiProvider {
             "max_tokens": self.max_tokens,
             "messages": oai_messages,
             "stream": true,
+            "think": self.think_enabled,
         });
 
         if let Some(ref tool_defs) = tools {
@@ -1004,6 +1012,8 @@ impl LlmProvider for OpenAiProvider {
                 body["tools"] = json!(translate_tools_to_oai(tool_defs));
             }
         }
+
+        info!("Sending chat request to: {}", self.chat_url);
 
         let mut req = self
             .http

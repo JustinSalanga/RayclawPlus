@@ -88,6 +88,7 @@ export function ChatTimeline({
       isSearchMatch={searchMatches.includes(messages.length - 1)}
       isCurrentMatch={searchMatches[currentMatchIdx] === messages.length - 1}
       onRetry={undefined}
+      responseDurationMs={lastResponseDurationMs ?? undefined}
     />
   ) : null;
 

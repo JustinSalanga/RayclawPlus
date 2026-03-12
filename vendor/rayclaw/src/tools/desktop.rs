@@ -294,7 +294,7 @@ where
 
 #[cfg(target_os = "windows")]
 mod platform {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::path::Path;
     use std::sync::Once;
     use std::thread;
@@ -801,7 +801,7 @@ mod platform {
         let steps = if request.delta == 0 {
             0
         } else {
-            let magnitude = ((request.delta.abs() + 119) / 120) as i32;
+            let magnitude = ((request.delta.abs() + 299) / 300) as i32;
             if request.delta > 0 {
                 -magnitude
             } else {
@@ -841,6 +841,7 @@ mod platform {
         let mut available_elements = Vec::new();
         let mut seen_names = HashSet::new();
         let mut matches = Vec::new();
+        let mut process_name_cache = HashMap::<u32, Option<String>>::new();
 
         let mut stack = child_elements(&walker, &root);
         stack.reverse();
@@ -862,16 +863,25 @@ mod platform {
                 available_elements.push(name.clone());
             }
 
+            // Cheap text filter first to skip expensive work for non-matching elements
+            if !contains_ignore_case(&name, &request.text) {
+                continue;
+            }
+
             let process_id = element.get_process_id().unwrap_or_default();
-            let process_name = process_name(process_id as u32);
+            let process_name = if request.app_name.is_empty() {
+                None
+            } else {
+                process_name_cache
+                    .entry(process_id)
+                    .or_insert_with(|| process_name(process_id))
+                    .clone()
+            };
             if !request.app_name.is_empty()
                 && !process_name
                     .as_deref()
                     .is_some_and(|value| contains_ignore_case(value, &request.app_name))
             {
-                continue;
-            }
-            if !contains_ignore_case(&name, &request.text) {
                 continue;
             }
             if element.is_offscreen().unwrap_or(false) {
@@ -1068,72 +1078,73 @@ impl Tool for MouseClickTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "mouse_click".into(),
-            description: "Click at screen coordinates. Supports raw screen coordinates, window-relative coordinates, and screenshot metadata for deterministic coordinate conversion.".into(),
+            description: "Click at a position on screen. Supports three coordinate modes: (1) absolute screen coordinates via x/y, (2) window-relative coordinates via window_x/window_y + window_id, and (3) screenshot coordinates via screenshot_x/screenshot_y plus either screenshot origin metadata or a screenshot_window_id. Prefer screenshot or window-relative coordinates when you derived the target from find_text or capture_screenshot; use raw screen coordinates only as a last resort."
+                .into(),
             input_schema: schema_object(
                 json!({
                     "x": {
                         "type": "number",
-                        "description": "Screen X coordinate"
+                        "description": "Absolute screen X coordinate."
                     },
                     "y": {
                         "type": "number",
-                        "description": "Screen Y coordinate"
+                        "description": "Absolute screen Y coordinate."
                     },
                     "window_x": {
                         "type": "number",
-                        "description": "X coordinate relative to the target window"
+                        "description": "X coordinate relative to the top-left of a target window (requires window_id/hwnd)."
                     },
                     "window_y": {
                         "type": "number",
-                        "description": "Y coordinate relative to the target window"
+                        "description": "Y coordinate relative to the top-left of a target window (requires window_id/hwnd)."
                     },
                     "window_id": {
                         "type": ["string", "integer"],
-                        "description": "Window handle from list_windows, used with window_x/window_y"
+                        "description": "Window handle from list_windows used with window_x/window_y for window-relative clicks."
                     },
                     "hwnd": {
                         "type": ["string", "integer"],
-                        "description": "Alias for window_id"
+                        "description": "Alias for window_id."
                     },
                     "screenshot_x": {
                         "type": "number",
-                        "description": "X pixel coordinate from a screenshot"
+                        "description": "X pixel coordinate from a screenshot (in screenshot pixels, not screen coordinates)."
                     },
                     "screenshot_y": {
                         "type": "number",
-                        "description": "Y pixel coordinate from a screenshot"
+                        "description": "Y pixel coordinate from a screenshot (in screenshot pixels, not screen coordinates)."
                     },
                     "screenshot_origin_x": {
                         "type": "number",
-                        "description": "Screenshot origin X from capture_screenshot metadata"
+                        "description": "Screenshot origin X from capture_screenshot metadata, used to convert screenshot_x into absolute screen coordinates."
                     },
                     "screenshot_origin_y": {
                         "type": "number",
-                        "description": "Screenshot origin Y from capture_screenshot metadata"
+                        "description": "Screenshot origin Y from capture_screenshot metadata, used to convert screenshot_y into absolute screen coordinates."
                     },
                     "screenshot_scale": {
                         "type": "number",
-                        "description": "Screenshot scale from capture_screenshot metadata (default: 1.0)"
+                        "description": "Screenshot scale from capture_screenshot metadata (default: 1.0). Use when the screenshot is scaled relative to the native desktop resolution."
                     },
                     "screenshot_window_id": {
                         "type": ["string", "integer"],
-                        "description": "Window handle the screenshot was taken from, used for window-scoped screenshots"
+                        "description": "Window handle the screenshot was taken from, used to convert screenshot_x/screenshot_y relative to that window into absolute screen coordinates."
                     },
                     "button": {
                         "type": "string",
-                        "description": "Mouse button: left, right, center, or middle (default: left)"
+                        "description": "Mouse button: left, right, center, or middle (default: left). Use right for context menus, and click_count 2 for double-click."
                     },
                     "clicks": {
                         "type": "integer",
-                        "description": "Alias for click_count"
+                        "description": "Alias for click_count."
                     },
                     "click_count": {
                         "type": "integer",
-                        "description": "How many times to click (default: 1)"
+                        "description": "How many times to click (default: 1). Use 2 for a double-click."
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Timeout in seconds (default: 30)"
+                        "description": "Timeout in seconds (default: 30)."
                     }
                 }),
                 &[],
@@ -1223,16 +1234,17 @@ impl Tool for TypeTextTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "type_text".into(),
-            description: "Type text into the currently focused desktop window. Use after focus_window or click places the caret in the target input.".into(),
+            description: "Type a string into the currently focused desktop window using OS-level keyboard input. Use after focus_window and a mouse_click have placed the caret in the correct input field; for special keys or shortcuts, use press_key instead."
+                .into(),
             input_schema: schema_object(
                 json!({
                     "text": {
                         "type": "string",
-                        "description": "The exact text to type into the focused window"
+                        "description": "The exact text to type into the focused window. Text is sent as if typed on a physical keyboard."
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Timeout in seconds (default: 30)"
+                        "description": "Timeout in seconds (default: 30)."
                     }
                 }),
                 &["text"],
@@ -1260,23 +1272,24 @@ impl Tool for PressKeyTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "press_key".into(),
-            description: "Press a key or key combination in the currently focused desktop window. Supports modifiers ctrl, alt, and shift.".into(),
+            description: "Press a single key or key combination (with ctrl, alt, and/or shift) in the currently focused desktop window. Use for shortcuts such as Ctrl+S, Alt+Tab, or navigation keys like Enter, Tab, and arrows."
+                .into(),
             input_schema: schema_object(
                 json!({
                     "key": {
                         "type": "string",
-                        "description": "Key to press, for example enter, tab, escape, up, down, f5, a"
+                        "description": "Key to press, for example enter, tab, escape, space, backspace, delete, up, down, left, right, f5, or a single character like a or 1."
                     },
                     "modifiers": {
                         "type": "array",
-                        "description": "Optional modifiers: ctrl, alt, shift",
+                        "description": "Optional modifiers combined with key for shortcuts. Supported: ctrl, alt, shift. The Windows/meta modifier is intentionally not supported.",
                         "items": {
                             "type": "string"
                         }
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Timeout in seconds (default: 30)"
+                        "description": "Timeout in seconds (default: 30)."
                     }
                 }),
                 &["key"],
@@ -1327,24 +1340,25 @@ impl Tool for MouseScrollTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "mouse_scroll".into(),
-            description: "Scroll the mouse wheel on the desktop. Positive delta scrolls up; negative delta scrolls down.".into(),
+            description: "Scroll the mouse wheel at the current cursor position (or an optional target position). Positive delta scrolls up; negative delta scrolls down. Use to navigate scrollable content after positioning the cursor with mouse_move if needed."
+                .into(),
             input_schema: schema_object(
                 json!({
                     "delta": {
                         "type": "integer",
-                        "description": "Wheel delta. Use positive values to scroll up and negative values to scroll down. Typical step: 120."
+                        "description": "Wheel delta. Use positive values to scroll up and negative values to scroll down. Typical step magnitude: around 300 for a visible scroll."
                     },
                     "x": {
                         "type": "integer",
-                        "description": "Optional X coordinate to move the cursor before scrolling"
+                        "description": "Optional absolute screen X coordinate. If provided with y, the cursor is moved here before scrolling."
                     },
                     "y": {
                         "type": "integer",
-                        "description": "Optional Y coordinate to move the cursor before scrolling"
+                        "description": "Optional absolute screen Y coordinate. If provided with x, the cursor is moved here before scrolling."
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Timeout in seconds (default: 30)"
+                        "description": "Timeout in seconds (default: 30)."
                     }
                 }),
                 &["delta"],
@@ -1380,32 +1394,33 @@ impl Tool for FindTextTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "find_text".into(),
-            description: "Find text on screen using Windows UI Automation with case-insensitive contains matching and return screen coordinates ready for click. If no text matches, the result includes a screenshot-plus-vision fallback instruction.".into(),
+            description: "Search for text on screen using Windows UI Automation with case-insensitive contains matching and return matching UI elements with screen coordinates ready for mouse_click. Prefer this over screenshots when you know the label or text of a UI element; when there are no matches, the response includes available element names and a screenshot-plus-vision fallback strategy."
+                .into(),
             input_schema: schema_object(
                 json!({
                     "text": {
                         "type": "string",
-                        "description": "Text or label substring to search for using case-insensitive contains matching"
+                        "description": "Text or label substring to search for using case-insensitive contains matching. For example: 'Save', 'OK', or part of a menu item label."
                     },
                     "window_id": {
                         "type": ["string", "integer"],
-                        "description": "Optional window handle from list_windows to scope the search"
+                        "description": "Optional window handle from list_windows to scope the search to a single window."
                     },
                     "hwnd": {
                         "type": ["string", "integer"],
-                        "description": "Alias for window_id"
+                        "description": "Alias for window_id."
                     },
                     "app_name": {
                         "type": "string",
-                        "description": "Optional process/app name filter"
+                        "description": "Optional process/app name filter. When set, only elements belonging to matching processes are considered."
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum number of matches to return (default: 10)"
+                        "description": "Maximum number of matches to return (default: 10). Each match includes name, control_type, bounding box, and center_x/center_y ready for mouse_click."
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Timeout in seconds (default: 30)"
+                        "description": "Timeout in seconds (default: 30)."
                     }
                 }),
                 &["text"],
@@ -1451,24 +1466,25 @@ impl Tool for ListWindowsTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "list_windows".into(),
-            description: "List visible top-level desktop windows with their titles, window handles, process ids, and foreground status.".into(),
+            description: "Enumerate visible top-level desktop windows with their titles, window handles (hwnd), process ids, process names, positions, sizes, and foreground status. Use this before any window-targeted operation to discover the correct hwnd and confirm which window is active."
+                .into(),
             input_schema: schema_object(
                 json!({
                     "title_filter": {
                         "type": "string",
-                        "description": "Optional substring filter for window titles"
+                        "description": "Optional case-insensitive substring filter for window titles to narrow results, for example 'chrome' or 'notepad'."
                     },
                     "app_name": {
                         "type": "string",
-                        "description": "Optional substring filter for process/app name"
+                        "description": "Optional case-insensitive substring filter for process/app name, for example 'chrome' or 'notepad'."
                     },
                     "include_hidden": {
                         "type": "boolean",
-                        "description": "Whether to include hidden windows (default: false)"
+                        "description": "Whether to include non-visible (hidden or off-screen) windows (default: false)."
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Timeout in seconds (default: 30)"
+                        "description": "Timeout in seconds (default: 30)."
                     }
                 }),
                 &[],
@@ -1509,24 +1525,25 @@ impl Tool for FocusWindowTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "focus_window".into(),
-            description: "Bring a desktop window to the foreground by window handle or title match. Prefer list_windows first when you need to inspect titles.".into(),
+            description: "Bring a desktop window to the foreground by window handle or title match, restoring it if minimized. Use this before clicking or typing so input goes to the correct application window; typically you call list_windows first to discover the right hwnd or title."
+                .into(),
             input_schema: schema_object(
                 json!({
                     "hwnd": {
                         "type": "string",
-                        "description": "Window handle from list_windows, for example 0x12345"
+                        "description": "Window handle from list_windows, for example '0x12345'. Use this when you already know the exact window to focus."
                     },
                     "title": {
                         "type": "string",
-                        "description": "Exact window title match"
+                        "description": "Exact window title match. Case-insensitive equality is used."
                     },
                     "title_contains": {
                         "type": "string",
-                        "description": "Case-insensitive substring match for a window title"
+                        "description": "Case-insensitive substring match for a window title, useful when the full title may vary (e.g. includes a file name)."
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Timeout in seconds (default: 30)"
+                        "description": "Timeout in seconds (default: 30)."
                     }
                 }),
                 &[],
@@ -1571,21 +1588,21 @@ impl Tool for MouseMoveTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "mouse_move".into(),
-            description: "Move the mouse cursor to an absolute screen position without clicking."
+            description: "Move the mouse cursor to an absolute screen position without clicking. Use this to hover over elements (for tooltips or hover states), to prepare for a subsequent mouse_click, or to position the cursor before scrolling."
                 .into(),
             input_schema: schema_object(
                 json!({
                     "x": {
                         "type": "number",
-                        "description": "Target screen X coordinate"
+                        "description": "Target absolute screen X coordinate."
                     },
                     "y": {
                         "type": "number",
-                        "description": "Target screen Y coordinate"
+                        "description": "Target absolute screen Y coordinate."
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Timeout in seconds (default: 30)"
+                        "description": "Timeout in seconds (default: 30)."
                     }
                 }),
                 &["x", "y"],
@@ -1619,13 +1636,13 @@ impl Tool for GetMousePositionTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "get_mouse_position".into(),
-            description: "Get the current mouse cursor position in absolute screen coordinates."
+            description: "Get the current mouse cursor position in absolute screen coordinates. Use this to verify where the cursor landed after mouse_move or mouse_click, or to debug unexpected click locations."
                 .into(),
             input_schema: schema_object(
                 json!({
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Timeout in seconds (default: 30)"
+                        "description": "Timeout in seconds (default: 30)."
                     }
                 }),
                 &[],

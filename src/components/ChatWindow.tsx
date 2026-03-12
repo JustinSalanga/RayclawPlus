@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { MessageSquarePlus, Settings, X } from "lucide-react";
-import { getHistory, renameChat, readAttachmentAsDataUrl, stopAgent } from "../lib/tauri-api";
+import { getConfig, getHistory, renameChat, readAttachmentAsDataUrl, setShowThinking, stopAgent } from "../lib/tauri-api";
 import { inferChannel, channelLabel } from "../types";
 import type { StoredMessage } from "../types";
 import logoText from "../assets/logo-text.png";
@@ -45,6 +45,7 @@ export default function ChatWindow({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [isInputModalOpen, setIsInputModalOpen] = useState(false);
+  const [showThinking, setShowThinkingState] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -139,6 +140,12 @@ export default function ChatWindow({
     setAttachments([]);
     setSoulOpen(false);
   }, [chatId, setAttachments, setSearchOpen, setSoulOpen]);
+
+  useEffect(() => {
+    getConfig()
+      .then((cfg) => setShowThinkingState(Boolean(cfg.show_thinking)))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (chatId === null) {
@@ -524,6 +531,15 @@ export default function ChatWindow({
         isReadOnly={isReadOnly}
         input={input}
         setInput={setInput}
+        showThinking={showThinking}
+        onToggleThinking={async (enabled) => {
+          setShowThinkingState(enabled);
+          try {
+            await setShowThinking(enabled);
+          } catch {
+            // ignore: toggle is best-effort
+          }
+        }}
         attachments={attachments}
         removeAttachment={removeAttachment}
         textareaRef={textareaRef}
