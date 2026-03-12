@@ -4,6 +4,8 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import oneDark from "react-syntax-highlighter/dist/esm/styles/prism/one-dark";
 import {
   Copy,
   Check,
@@ -226,6 +228,7 @@ function InlineMedia({
 function CodeBlock({ className, children }: { className?: string; children: React.ReactNode }) {
   const [copied, setCopied] = useState(false);
   const text = String(children).replace(/\n$/, "");
+  const language = className?.replace(/^language-/, "").toLowerCase() || "plaintext";
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(text).then(() => {
@@ -240,9 +243,23 @@ function CodeBlock({ className, children }: { className?: string; children: Reac
         {copied ? <Check size={14} /> : <Copy size={14} />}
         {copied ? "Copied" : "Copy"}
       </button>
-      <pre className="code-block">
-        <code className={className}>{children}</code>
-      </pre>
+      <SyntaxHighlighter
+        language={language}
+        style={oneDark}
+        PreTag="div"
+        className="code-block-syntax"
+        customStyle={{
+          margin: 0,
+          padding: "14px 16px",
+          borderRadius: "8px",
+          fontSize: "13px",
+          lineHeight: 1.5,
+        }}
+        codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
+        showLineNumbers={text.split("\n").length > 3}
+      >
+        {text}
+      </SyntaxHighlighter>
     </div>
   );
 }

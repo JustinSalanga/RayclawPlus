@@ -1595,6 +1595,22 @@ body {
   margin: 0;
 }
 
+/* Syntax-highlighted code block (editor style) */
+.code-block-wrapper .code-block-syntax {
+  font-family: var(--font-mono) !important;
+}
+
+.code-block-wrapper .code-block-syntax code {
+  font-family: inherit !important;
+}
+
+.code-block-wrapper .code-block-syntax .linenumber {
+  min-width: 2.2em;
+  padding-right: 12px;
+  color: var(--muted);
+  user-select: none;
+}
+
 /* ---- P1: ToolStep spinner ---- */
 
 .tool-step-spinner {
