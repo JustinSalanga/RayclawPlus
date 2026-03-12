@@ -1013,7 +1013,7 @@ impl LlmProvider for OpenAiProvider {
             }
         }
 
-        info!("Sending chat request to: {}", self.chat_url);
+        info!("Sending chat request to: {}, think: {}", self.chat_url, self.think_enabled);
 
         let mut req = self
             .http

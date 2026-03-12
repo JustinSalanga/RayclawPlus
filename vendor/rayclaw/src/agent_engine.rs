@@ -1319,7 +1319,9 @@ User messages arrive wrapped in `<user_message sender="name">content</user_messa
     }
 
     if !skills_catalog.is_empty() {
-        prompt.push_str("\n# Agent Skills\n\nThe following skills are available. When a task matches a skill, use the `activate_skill` tool to load its full instructions before proceeding.\n\n");
+        prompt.push_str(
+            "\n# Agent Skills\n\nThe following skills are available.\n\nFor **every new user task**, you must:\n- First, inspect the task text and the skills catalog.\n- If any available skill's name or description clearly matches the task, call the `activate_skill` tool for the single best-matching skill **before** using other tools.\n- If no skill clearly matches, explicitly continue without activating a skill and handle the task with your own reasoning and tools.\n\n",
+        );
         prompt.push_str(skills_catalog);
         prompt.push('\n');
     }

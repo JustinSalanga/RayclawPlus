@@ -645,7 +645,7 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
               {fieldErr("max_tokens") && <p className="field-error">{fieldErr("max_tokens")}</p>}
 
               <label className="settings-field settings-toggle">
-                <span>Show Thinking</span>
+                <span>Thinking</span>
                 <input
                   type="checkbox"
                   checked={config.show_thinking}
