@@ -12,7 +12,14 @@ use rayclaw::channel_adapter::ChannelRegistry;
 use rayclaw::config::Config;
 use rayclaw::runtime::AppState;
 use state::DesktopState;
-use tauri::Manager;
+use tauri::{
+    menu::Menu,
+    menu::MenuItem,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Emitter,
+    Manager,
+    WindowEvent,
+};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
@@ -500,6 +507,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_notification::init())
+        // Intercept close requests to minimize to tray instead of quitting.
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                if let Err(e) = window.hide() {
+                    warn!("Failed to hide window on close: {e}");
+                }
+            }
+        })
         .setup(|app| {
             configure_agent_browser_env(&app.handle().clone());
             let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
@@ -548,6 +565,76 @@ pub fn run() {
                 channel_enabled: std::sync::Mutex::new(channel_enabled),
                 agent_handles: std::sync::Mutex::new(std::collections::HashMap::new()),
             });
+
+            // System tray icon with context menu: Open, Settings, Quit.
+            let open_item = MenuItem::with_id(app, "tray_open", "Open", true, None::<&str>)?;
+            let settings_item = MenuItem::with_id(app, "tray_settings", "Settings", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "tray_quit", "Quit", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&open_item, &settings_item, &quit_item])?;
+
+            // Build tray icon, using the app's default window icon when available.
+            // Disable showing the context menu on left click; we handle left-click
+            let default_icon = app.default_window_icon().cloned();
+            let tray_builder = TrayIconBuilder::new()
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false);
+            let tray_builder = if let Some(icon) = default_icon {
+                tray_builder.icon(icon)
+            } else {
+                tray_builder
+            };
+
+            tray_builder
+                // Left-click toggles main window visibility (on mouse button release only).
+                // Right-click behaviour is left to the OS to show the tray context menu.
+                .on_tray_icon_event(|tray, event| {
+                    let app = tray.app_handle();
+                    if let TrayIconEvent::Click {
+                        button,
+                        button_state,
+                        ..
+                    } = event
+                    {
+                        if button != MouseButton::Left || button_state != MouseButtonState::Up {
+                            return;
+                        }
+                        if let Some(window) = app.get_webview_window("main") {
+                            match window.is_visible() {
+                                Ok(true) => {
+                                    let _ = window.hide();
+                                }
+                                Ok(false) | Err(_) => {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                        }
+                    }
+                })
+                // Context menu actions.
+                .on_menu_event(|app, event| {
+                    match event.id().as_ref() {
+                        "tray_open" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "tray_settings" => {
+                            // Ask frontend to open Settings view.
+                            let _ = app.emit("tray-open-settings", &());
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "tray_quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .build(app)?;
 
             info!("Tauri setup complete");
             Ok(())

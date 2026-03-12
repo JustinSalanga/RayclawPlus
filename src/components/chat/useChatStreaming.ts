@@ -91,6 +91,51 @@ export function useChatStreaming({
     [setMessages],
   );
 
+  // Dispatch a DOM event so the app can switch to the relevant chat when the
+  // user clicks a system notification.
+  const dispatchNotificationClick = useCallback((targetChatId: number) => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(
+      new CustomEvent("rayclaw-open-chat", {
+        detail: { chatId: targetChatId },
+      }),
+    );
+  }, []);
+
+  // Show a native/system notification when a response finishes while the app
+  // is in the background.
+  const showSystemNotification = useCallback(
+    (targetChatId: number, title: string | null, body: string) => {
+      if (typeof window === "undefined" || !("Notification" in window)) return;
+      const trimmed = body.trim();
+      if (!trimmed) return;
+
+      const notificationTitle = title ?? "VirusClaw";
+      const preview =
+        trimmed.length > 160 ? `${trimmed.slice(0, 157).trimEnd()}…` : trimmed;
+
+      const create = () => {
+        const notification = new Notification(notificationTitle, {
+          body: preview,
+        });
+        notification.onclick = () => {
+          window.focus();
+          dispatchNotificationClick(targetChatId);
+          notification.close();
+        };
+      };
+
+      if (Notification.permission === "granted") {
+        create();
+      } else if (Notification.permission !== "denied") {
+        Notification.requestPermission().then((perm) => {
+          if (perm === "granted") create();
+        });
+      }
+    },
+    [dispatchNotificationClick],
+  );
+
   useEffect(() => {
     const unlistenPromise = onAgentStream((event: AgentStreamEvent) => {
       const eventChatId = event.chat_id;
@@ -158,6 +203,14 @@ export function useChatStreaming({
             };
             lastStreamResponseMessageId = botMessage.id;
             appendMessageToTimeline(botMessage);
+          }
+
+          // If the app is in the background when the response finishes, send a
+          // system notification for the completed task.
+          const isBackground =
+            typeof document !== "undefined" && document.hidden;
+          if (isBackground && content) {
+            showSystemNotification(eventChatId, chatTitle, content);
           }
           updateChatRuntimeState(eventChatId, (state) => {
             const started = state.streamStartedAt ?? Date.now();

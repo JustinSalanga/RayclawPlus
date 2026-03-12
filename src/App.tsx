@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useShallow } from "zustand/react/shallow";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
@@ -52,11 +53,42 @@ function App() {
     refreshStatus();
   }, [refreshStatus]);
 
+  // Handle tray menu "Settings" action.
+  useEffect(() => {
+    let unlistenPromise: Promise<UnlistenFn> | null = null;
+    if (typeof window !== "undefined") {
+      unlistenPromise = listen("tray-open-settings", () => {
+        setView("settings");
+      });
+    }
+    return () => {
+      unlistenPromise?.then((unlisten) => unlisten());
+    };
+  }, [setView]);
+
   useEffect(() => {
     if (status?.ready) {
       loadChats();
     }
   }, [status?.ready, loadChats]);
+
+  // When a system notification is clicked for a specific chat, focus that chat.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ chatId?: number }>).detail;
+      if (!detail || typeof detail.chatId !== "number") return;
+      setActiveChatId(detail.chatId);
+      setView("chat");
+    };
+    window.addEventListener("rayclaw-open-chat", handler as EventListener);
+    return () => {
+      window.removeEventListener(
+        "rayclaw-open-chat",
+        handler as EventListener,
+      );
+    };
+  }, [setActiveChatId, setView]);
 
   const handleSelectChat = (chatId: number) => {
     setActiveChatId(chatId);
