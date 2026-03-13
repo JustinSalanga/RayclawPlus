@@ -1,4 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  type ReactNode,
+} from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { getConfig, saveConfig, getChannelStatus, toggleChannel, listSkills, getSkill, saveSkill, deleteSkill, readSoul, saveSoul, listMemories, searchMemories, updateMemory, archiveMemory, deleteMemory, getMemoryObservability, getUsageSummary, getUsageByModel, listScheduledTasks, updateTaskStatus, deleteScheduledTask, getTaskRunLogs, getChats } from "../lib/tauri-api";
 import type { ConfigDto, ChannelStatus, SkillDto, SkillDetailDto, MemoryDto, MemoryObservabilityDto, UsageSummaryDto, ModelUsageDto, ScheduledTaskDto, TaskRunLogDto, ChatSummary } from "../types";
@@ -44,6 +50,7 @@ const CHANNELS: { key: string; label: string }[] = [
 interface SettingsPageProps {
   onBack: () => void;
   onSaved: () => void;
+  setTitlebarChatHeaderContent?: (content: ReactNode) => void;
 }
 
 // ---- Password field with Eye toggle ----
@@ -97,7 +104,11 @@ function validate(config: ConfigDto): ValidationErrors {
   return errs;
 }
 
-export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
+export default function SettingsPage({
+  onBack,
+  onSaved,
+  setTitlebarChatHeaderContent,
+}: SettingsPageProps) {
   const [config, setConfig] = useState<ConfigDto | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -286,6 +297,42 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
     onBack();
   };
 
+  useEffect(() => {
+    if (!setTitlebarChatHeaderContent) return;
+    const currentHasErrors = Object.keys(validationErrors).length > 0;
+    setTitlebarChatHeaderContent(
+      <div className="settings-header">
+        <button className="btn-back" onClick={handleBack}>
+          &larr; Back
+        </button>
+        <h1>Settings</h1>
+        <div className="settings-header-actions">
+          {error && <span className="settings-error">{error}</span>}
+          {success && <span className="settings-success">Saved</span>}
+          {isDirty && !success && (
+            <span className="settings-dirty">Unsaved</span>
+          )}
+          <button
+            className="btn-save"
+            onClick={handleSave}
+            disabled={saving || currentHasErrors}
+          >
+            {saving ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </div>,
+    );
+  }, [
+    setTitlebarChatHeaderContent,
+    handleBack,
+    handleSave,
+    error,
+    success,
+    isDirty,
+    saving,
+    validationErrors,
+  ]);
+
   if (!config) {
     return (
       <main className="settings-page">
@@ -296,7 +343,6 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
   const statusOf = (name: string) => channelStatuses.find((s) => s.name === name);
   const fieldErr = (key: string) => validationErrors[key];
-  const hasErrors = Object.keys(validationErrors).length > 0;
 
   const handleToggle = async (name: string, enabled: boolean) => {
     try {
@@ -487,21 +533,6 @@ export default function SettingsPage({ onBack, onSaved }: SettingsPageProps) {
 
   return (
     <main className="settings-page">
-      <div className="settings-header">
-        <button className="btn-back" onClick={handleBack}>
-          &larr; Back
-        </button>
-        <h1>Settings</h1>
-        <div className="settings-header-actions">
-          {error && <span className="settings-error">{error}</span>}
-          {success && <span className="settings-success">Saved</span>}
-          {isDirty && !success && <span className="settings-dirty">Unsaved</span>}
-          <button className="btn-save" onClick={handleSave} disabled={saving || hasErrors}>
-            {saving ? "Saving..." : "Save"}
-          </button>
-        </div>
-      </div>
-
       <div className="settings-split">
         {/* Left nav */}
         <nav className="settings-nav">

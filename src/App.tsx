@@ -99,13 +99,37 @@ function App() {
     refreshStatus();
   };
 
-  const [titlebarChatHeaderContent, setTitlebarChatHeaderContent] = useState<ReactNode>(null);
+  const [titlebarChatHeaderContent, setTitlebarChatHeaderContent] =
+    useState<ReactNode>(null);
 
   useEffect(() => {
-    if (view !== "chat" || !status?.ready) {
+    if (view !== "chat" && view !== "settings") {
       setTitlebarChatHeaderContent(null);
     }
-  }, [view, status?.ready]);
+  }, [view]);
+
+  // When ready and viewing chat with no active chat, open last chat or start a new one.
+  useEffect(() => {
+    if (!status?.ready) return;
+    if (view !== "chat") return;
+    if (activeChatId !== null) return;
+
+    if (chats.length > 0) {
+      const lastChat = chats[chats.length - 1];
+      if (lastChat?.chat_id != null) {
+        setActiveChatId(lastChat.chat_id);
+      }
+    } else {
+      handleNewChat();
+    }
+  }, [
+    status?.ready,
+    view,
+    activeChatId,
+    chats,
+    setActiveChatId,
+    handleNewChat,
+  ]);
 
   // Loading
   if (status === null) {
@@ -142,11 +166,14 @@ function App() {
   if (view === "settings") {
     return (
       <div className="app-with-titlebar">
-        <CustomTitlebar chatHeaderContent={null} />
+        <CustomTitlebar
+          chatHeaderContent={titlebarChatHeaderContent}
+        />
         <div className="app-content">
           <SettingsPage
             onBack={() => setView("chat")}
             onSaved={handleSettingsSaved}
+            setTitlebarChatHeaderContent={setTitlebarChatHeaderContent}
           />
         </div>
       </div>
@@ -181,7 +208,6 @@ function App() {
           chatTitle={chats.find((c) => c.chat_id === activeChatId)?.chat_title ?? null}
           chatType={chats.find((c) => c.chat_id === activeChatId)?.chat_type}
           onNewChat={handleNewChat}
-          onOpenSettings={() => setView("settings")}
           onTitleChanged={loadChats}
           searchOpen={chatSearchOpen}
           onSearchClose={closeChatSearch}

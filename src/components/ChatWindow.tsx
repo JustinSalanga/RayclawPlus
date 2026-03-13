@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { MessageSquarePlus, Settings, Sparkles, X } from "lucide-react";
+import { MessageSquarePlus, Sparkles, X } from "lucide-react";
 import { getConfig, getHistory, renameChat, readAttachmentAsDataUrl, setShowThinking, stopAgent } from "../lib/tauri-api";
 import { inferChannel, channelLabel } from "../types";
 import type { StoredMessage } from "../types";
-import logoText from "../assets/logo-text.png";
 import { mergeMessagesWithAttachmentPreviews } from "./chat/chatTypes";
 import { useChatStreaming } from "./chat/useChatStreaming";
 import { useChatSearch } from "./chat/useChatSearch";
@@ -20,7 +19,6 @@ export interface ChatWindowProps {
   chatTitle: string | null;
   chatType?: string;
   onNewChat?: () => void;
-  onOpenSettings?: () => void;
   onTitleChanged?: () => void;
   searchOpen?: boolean;
   onSearchClose?: () => void;
@@ -32,7 +30,6 @@ export default function ChatWindow({
   chatTitle,
   chatType,
   onNewChat,
-  onOpenSettings,
   onTitleChanged,
   searchOpen: searchOpenProp,
   onSearchClose,
@@ -480,46 +477,7 @@ export default function ChatWindow({
   );
 
   if (chatId === null) {
-    return (
-      <main className="chat-window chat-window-empty">
-        <div className="chat-header">
-          {onNewChat && (
-            <button
-              type="button"
-              className="chat-header-new-chat-btn"
-              onClick={onNewChat}
-              title="New Chat"
-            >
-              <MessageSquarePlus size={14} />
-              New chat
-            </button>
-          )}
-        </div>
-        <div className="chat-empty-state">
-          <img src={logoText} alt="VirusClaw" className="setup-logo" />
-          <h2>Welcome to VirusClaw</h2>
-          <p>Select a chat or start a new conversation</p>
-          <div className="empty-state-actions">
-            {onNewChat && (
-              <button className="empty-state-btn" onClick={onNewChat} type="button">
-                <MessageSquarePlus size={16} />
-                New Chat
-              </button>
-            )}
-            {onOpenSettings && (
-              <button
-                className="empty-state-btn empty-state-btn-secondary"
-                onClick={onOpenSettings}
-                type="button"
-              >
-                <Settings size={16} />
-                Settings
-              </button>
-            )}
-          </div>
-        </div>
-      </main>
-    );
+    return null;
   }
 
   return (
