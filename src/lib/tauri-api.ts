@@ -168,6 +168,10 @@ export async function listScheduledTasks(chatId: number): Promise<ScheduledTaskD
   return invoke("list_scheduled_tasks", { chatId });
 }
 
+export async function listAllScheduledTasks(): Promise<ScheduledTaskDto[]> {
+  return invoke("list_all_scheduled_tasks");
+}
+
 export async function updateTaskStatus(taskId: number, status: string): Promise<boolean> {
   return invoke("update_task_status", { taskId, status });
 }

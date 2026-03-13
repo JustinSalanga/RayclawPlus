@@ -686,6 +686,10 @@ impl Database {
                 msg.attachment_paths.as_deref(),
             ],
         )?;
+        conn.execute(
+            "UPDATE chats SET last_message_time = ?1 WHERE chat_id = ?2",
+            params![msg.timestamp, msg.chat_id],
+        )?;
         Ok(())
     }
 
@@ -986,6 +990,31 @@ impl Database {
         )?;
         let tasks = stmt
             .query_map(params![chat_id], |row| {
+                Ok(ScheduledTask {
+                    id: row.get(0)?,
+                    chat_id: row.get(1)?,
+                    prompt: row.get(2)?,
+                    schedule_type: row.get(3)?,
+                    schedule_value: row.get(4)?,
+                    next_run: row.get(5)?,
+                    last_run: row.get(6)?,
+                    status: row.get(7)?,
+                    created_at: row.get(8)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(tasks)
+    }
+
+    pub fn get_all_tasks(&self) -> Result<Vec<ScheduledTask>, RayClawError> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, chat_id, prompt, schedule_type, schedule_value, next_run, last_run, status, created_at
+             FROM scheduled_tasks
+             ORDER BY id",
+        )?;
+        let tasks = stmt
+            .query_map([], |row| {
                 Ok(ScheduledTask {
                     id: row.get(0)?,
                     chat_id: row.get(1)?,

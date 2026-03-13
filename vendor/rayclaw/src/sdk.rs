@@ -109,6 +109,7 @@ impl RayClawAgent {
             mcp_manager,
             acp_manager,
             true, // use SDK tools (no send_message, no schedule)
+            None,
         )
         .await
         .map_err(|e| RayClawError::Config(format!("Failed to initialize agent: {e}")))?;

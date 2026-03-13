@@ -91,6 +91,19 @@ function App() {
     };
   }, [setActiveChatId, setView]);
 
+  // When the scheduler completes a task, refetch chats so the updated chat moves to the top of the sidebar.
+  useEffect(() => {
+    let unlistenPromise: Promise<UnlistenFn> | null = null;
+    if (typeof window !== "undefined") {
+      unlistenPromise = listen<number>("scheduled-task-completed", () => {
+        loadChats();
+      });
+    }
+    return () => {
+      unlistenPromise?.then((unlisten) => unlisten());
+    };
+  }, [loadChats]);
+
   const handleSelectChat = (chatId: number) => {
     setActiveChatId(chatId);
   };

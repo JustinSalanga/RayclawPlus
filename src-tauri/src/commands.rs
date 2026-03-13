@@ -530,8 +530,9 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
     // Reinitialize agent + channels on stored runtime
     info!("save_config: reinitializing agent + channels...");
     let rt_handle = desktop.runtime.handle().clone();
+    let (task_done_tx, mut task_done_rx) = tokio::sync::mpsc::unbounded_channel::<i64>();
     let new_state = rt_handle
-        .spawn(async move { crate::init_agent(full_config).await })
+        .spawn(async move { crate::init_agent(full_config, Some(task_done_tx)).await })
         .await
         .map_err(|e| {
             error!("save_config: spawn failed: {e}");
@@ -541,6 +542,13 @@ pub async fn save_config(app: tauri::AppHandle, config: ConfigDto) -> Result<(),
             error!("save_config: agent init failed: {e}");
             format!("Failed to initialize agent: {e}")
         })?;
+
+    let app_handle = app.clone();
+    rt_handle.spawn(async move {
+        while let Some(chat_id) = task_done_rx.recv().await {
+            let _ = app_handle.emit("scheduled-task-completed", &chat_id);
+        }
+    });
 
     // Start channels (respecting enabled state)
     let enabled_map = desktop.channel_enabled.lock().unwrap().clone();
@@ -595,8 +603,9 @@ pub async fn set_show_thinking(app: tauri::AppHandle, enabled: bool) -> Result<(
 
     // Reinitialize agent + channels on stored runtime
     let rt_handle = desktop.runtime.handle().clone();
+    let (task_done_tx, mut task_done_rx) = tokio::sync::mpsc::unbounded_channel::<i64>();
     let new_state = rt_handle
-        .spawn(async move { crate::init_agent(full_config).await })
+        .spawn(async move { crate::init_agent(full_config, Some(task_done_tx)).await })
         .await
         .map_err(|e| {
             error!("set_show_thinking: spawn failed: {e}");
@@ -606,6 +615,13 @@ pub async fn set_show_thinking(app: tauri::AppHandle, enabled: bool) -> Result<(
             error!("set_show_thinking: agent init failed: {e}");
             format!("Failed to initialize agent: {e}")
         })?;
+
+    let app_handle = app.clone();
+    rt_handle.spawn(async move {
+        while let Some(chat_id) = task_done_rx.recv().await {
+            let _ = app_handle.emit("scheduled-task-completed", &chat_id);
+        }
+    });
 
     // Start channels (respecting enabled state)
     let enabled_map = desktop.channel_enabled.lock().unwrap().clone();
@@ -1665,6 +1681,29 @@ pub async fn list_scheduled_tasks(
         .db
         .get_tasks_for_chat(chat_id)
         .map_err(|e| e.to_string())?;
+    Ok(tasks
+        .into_iter()
+        .map(|t| ScheduledTaskDto {
+            id: t.id,
+            chat_id: t.chat_id,
+            prompt: t.prompt,
+            schedule_type: t.schedule_type,
+            schedule_value: t.schedule_value,
+            next_run: t.next_run,
+            last_run: t.last_run,
+            status: t.status,
+            created_at: t.created_at,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn list_all_scheduled_tasks(
+    app: tauri::AppHandle,
+) -> Result<Vec<ScheduledTaskDto>, String> {
+    let desktop = app.state::<DesktopState>();
+    let state = require_state(&desktop).await?;
+    let tasks = state.db.get_all_tasks().map_err(|e| e.to_string())?;
     Ok(tasks
         .into_iter()
         .map(|t| ScheduledTaskDto {

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::anyhow;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
 use tracing::info;
 #[cfg(feature = "sqlite-vec")]
@@ -70,10 +71,13 @@ pub struct AppState {
     pub acp_manager: Arc<crate::acp::AcpManager>,
     /// Per-chat concurrency lock: ensures only one agent loop runs per chat_id at a time.
     pub chat_locks: ChatLocks,
+    /// When set (e.g. by desktop), scheduler sends chat_id here after each task run so UI can refresh.
+    pub scheduled_task_done_tx: Option<UnboundedSender<i64>>,
 }
 
 /// Build an `AppState` without starting any channels, schedulers, or signal handlers.
 /// This is the shared initialization used by both the full `run()` and the SDK entry point.
+/// If `scheduled_task_done_tx` is set, the scheduler will send the chat_id on it after each task run.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_app_state(
     config: Config,
@@ -84,6 +88,7 @@ pub async fn create_app_state(
     mcp_manager: crate::mcp::McpManager,
     acp_manager: crate::acp::AcpManager,
     use_sdk_tools: bool,
+    scheduled_task_done_tx: Option<UnboundedSender<i64>>,
 ) -> anyhow::Result<Arc<AppState>> {
     let llm = crate::llm::create_provider(&config);
     let embedding = crate::embedding::create_provider(&config);
@@ -127,6 +132,7 @@ pub async fn create_app_state(
         tools,
         acp_manager,
         chat_locks: Mutex::new(HashMap::new()),
+        scheduled_task_done_tx,
     }))
 }
 
@@ -212,6 +218,7 @@ pub async fn run(
         mcp_manager,
         acp_manager,
         false,
+        None,
     )
     .await?;
 

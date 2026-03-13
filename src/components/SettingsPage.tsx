@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { getConfig, saveConfig, getChannelStatus, toggleChannel, listSkills, getSkill, saveSkill, deleteSkill, readSoul, saveSoul, listMemories, searchMemories, updateMemory, archiveMemory, deleteMemory, getMemoryObservability, getUsageSummary, getUsageByModel, listScheduledTasks, updateTaskStatus, deleteScheduledTask, getTaskRunLogs, getChats } from "../lib/tauri-api";
+import { getConfig, saveConfig, getChannelStatus, toggleChannel, listSkills, getSkill, saveSkill, deleteSkill, readSoul, saveSoul, listMemories, searchMemories, updateMemory, archiveMemory, deleteMemory, getMemoryObservability, getUsageSummary, getUsageByModel, listScheduledTasks, listAllScheduledTasks, updateTaskStatus, deleteScheduledTask, getTaskRunLogs, getChats } from "../lib/tauri-api";
 import type { ConfigDto, ChannelStatus, SkillDto, SkillDetailDto, MemoryDto, MemoryObservabilityDto, UsageSummaryDto, ModelUsageDto, ScheduledTaskDto, TaskRunLogDto, ChatSummary } from "../types";
 
 const PROVIDERS = [
@@ -279,7 +279,7 @@ export default function SettingsPage({
     if (schedulerChatId > 0) {
       listScheduledTasks(schedulerChatId).then(setSchedulerTasks).catch(() => {});
     } else {
-      setSchedulerTasks([]);
+      listAllScheduledTasks().then(setSchedulerTasks).catch(() => {});
     }
   }, [schedulerChatId]);
 
@@ -1054,12 +1054,12 @@ export default function SettingsPage({
               <h2>Scheduled Tasks</h2>
 
               <label className="settings-field">
-                <span>Chat</span>
+                <span>Chat (optional filter)</span>
                 <select
                   value={schedulerChatId || ""}
                   onChange={(e) => setSchedulerChatId(Number(e.target.value) || 0)}
                 >
-                  <option value="">Select a chat...</option>
+                  <option value="">All chats</option>
                   {schedulerChats.map((c) => (
                     <option key={c.chat_id} value={c.chat_id}>
                       {c.chat_title || `Chat #${c.chat_id}`} — {c.chat_type}
@@ -1098,8 +1098,8 @@ export default function SettingsPage({
 
               {/* Task list */}
               <div className="scheduler-task-list">
-                {schedulerChatId > 0 && schedulerTasks.length === 0 && !viewingTaskId && (
-                  <p className="settings-hint">No active or paused tasks for this chat.</p>
+                {schedulerTasks.length === 0 && !viewingTaskId && (
+                  <p className="settings-hint">No active or paused scheduled tasks.</p>
                 )}
                 {schedulerTasks.map((t) => (
                   <div key={t.id} className={`scheduler-task-item ${t.status === "paused" ? "scheduler-task-paused" : ""}`}>
@@ -1110,6 +1110,7 @@ export default function SettingsPage({
                     </div>
                     <p className="scheduler-task-prompt">{t.prompt.length > 120 ? t.prompt.slice(0, 120) + "..." : t.prompt}</p>
                     <div className="scheduler-task-meta">
+                      <span>Chat: #{t.chat_id}</span>
                       <span>Schedule: {t.schedule_value}</span>
                       <span>Next: {fmtDate(t.next_run)}</span>
                       {t.last_run && <span>Last: {fmtDate(t.last_run)}</span>}

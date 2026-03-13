@@ -401,7 +401,7 @@ body {
 }
 
 .message-streaming {
-  border-style: dashed;
+  border-style: 1px dashed var(--border-subtle);
 }
 
 .message-streaming-total-time {

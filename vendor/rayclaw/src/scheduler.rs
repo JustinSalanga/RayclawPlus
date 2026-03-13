@@ -150,6 +150,10 @@ async fn run_due_tasks(state: &Arc<AppState>) {
         {
             error!("Scheduler: failed to update task #{}: {e}", task.id);
         }
+
+        if let Some(ref tx) = state.scheduled_task_done_tx {
+            let _ = tx.send(task.chat_id);
+        }
     }
 }
 

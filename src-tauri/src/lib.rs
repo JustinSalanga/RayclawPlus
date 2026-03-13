@@ -263,7 +263,11 @@ fn synthesize_channels(config: &mut Config) {
 
 /// Initialize the full agent (DB, memory, skills, MCP, ACP, LLM, tools)
 /// with channel adapters registered and ready to start.
-pub(crate) async fn init_agent(mut config: Config) -> Result<Arc<AppState>, String> {
+/// If `scheduled_task_done_tx` is set, the scheduler will send the chat_id on it after each task run (for UI refresh).
+pub(crate) async fn init_agent(
+    mut config: Config,
+    scheduled_task_done_tx: Option<tokio::sync::mpsc::UnboundedSender<i64>>,
+) -> Result<Arc<AppState>, String> {
     config
         .validate_for_sdk()
         .map_err(|e| format!("Config validation: {e}"))?;
@@ -327,9 +331,14 @@ pub(crate) async fn init_agent(mut config: Config) -> Result<Arc<AppState>, Stri
         mcp_manager,
         acp_manager,
         false, // full tools — channels need send_message, schedule, sub_agent
+        scheduled_task_done_tx,
     )
     .await
     .map_err(|e| format!("AppState: {e}"))?;
+
+    // Start background workers (scheduler, reflector) for the desktop app.
+    rayclaw::scheduler::spawn_scheduler(state.clone());
+    rayclaw::scheduler::spawn_reflector(state.clone());
 
     info!("Agent initialized (full mode with channel support)");
     Ok(state)
@@ -522,6 +531,7 @@ pub fn run() {
             let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
 
             let channel_enabled = state::load_channel_enabled();
+            let (task_done_tx, mut task_done_rx) = tokio::sync::mpsc::unbounded_channel::<i64>();
 
             let (app_state, init_error, handles) = rt.block_on(async {
                 info!("Loading config...");
@@ -531,7 +541,7 @@ pub fn run() {
                             "Config loaded: provider={}, model={}, data_dir={}",
                             config.llm_provider, config.model, config.data_dir
                         );
-                        match init_agent(config).await {
+                        match init_agent(config, Some(task_done_tx)).await {
                             Ok(state) => {
                                 let h = start_channels(
                                     &state,
@@ -556,6 +566,15 @@ pub fn run() {
                     }
                 }
             });
+
+            if app_state.is_some() {
+                let app_handle = app.handle().clone();
+                rt.spawn(async move {
+                    while let Some(chat_id) = task_done_rx.recv().await {
+                        let _ = app_handle.emit("scheduled-task-completed", &chat_id);
+                    }
+                });
+            }
 
             app.manage(DesktopState {
                 app_state: RwLock::new(app_state),
@@ -675,6 +694,7 @@ pub fn run() {
             commands::get_usage_by_model,
             // Scheduler
             commands::list_scheduled_tasks,
+            commands::list_all_scheduled_tasks,
             commands::update_task_status,
             commands::delete_scheduled_task,
             commands::get_task_run_logs,
