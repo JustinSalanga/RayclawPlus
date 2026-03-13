@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { X, Plus, Paperclip, Brain, Maximize2, FileText, FileCode2, FileArchive, FileAudio2, FileVideo2 } from "lucide-react";
+import { X, Plus, Paperclip, Brain, Maximize2, FileText, FileCode2, FileArchive, FileAudio2, FileVideo2, Send } from "lucide-react";
 import type { QueuedMessage } from "./chatTypes";
 import type { FileAttachment } from "./chatTypes";
 
@@ -133,7 +133,7 @@ export function ChatComposer({
                   <img src={att.dataUrl} alt={att.name} className="attachment-thumb" />
                 ) : (
                   <div className="attachment-thumb attachment-thumb-file">
-                    <Icon size={24} color="gray" />
+                    <Icon size={24} />
                   </div>
                 )}
                 <span className="attachment-name">{att.name}</span>
@@ -210,6 +210,14 @@ export function ChatComposer({
               </div>
             </div>
           </div>
+          <button
+            className="btn-attach"
+            onClick={() => setIsInputModalOpen(true)}
+            title="Open fullscreen composer"
+            type="button"
+          >
+            <Maximize2 size={16} />
+          </button>
           <textarea
             ref={textareaRef}
             className="chat-input"
@@ -224,20 +232,12 @@ export function ChatComposer({
             rows={1}
           />
           <button
-            className="btn-attach"
-            onClick={() => setIsInputModalOpen(true)}
-            title="Open fullscreen composer"
-            type="button"
-          >
-            <Maximize2 size={18} />
-          </button>
-          <button
             className="btn-send"
             onClick={onSend}
             disabled={!canSend}
             type="button"
           >
-            Send
+            <Send size={20} /> <span className="btn-send-text">Send</span>
           </button>
         </div>
       </div>

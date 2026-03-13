@@ -304,6 +304,9 @@ export default function Sidebar({
         <button className="btn-settings" onClick={onOpenSettings}>
           Settings
         </button>
+        <div className="sidebar-footer-text">
+          <a href="https://kingmakertech.io" target="_blank" rel="noopener noreferrer">KingMaker Technology</a> &bull; <a href="mailto:xvirusman@gmail.com" target="_blank" rel="noopener noreferrer">Xvirusman</a>
+        </div>
       </div>
       <div className="sidebar-resize-handle" onMouseDown={handleResizeStart} />
     </aside>

@@ -811,18 +811,15 @@ function MessageBubble({ message, isSearchMatch, isCurrentMatch, onRetry, respon
           <div className="message-actions">
             <button className="message-action-btn" onClick={handleCopyMessage} title="Copy markdown">
               {copied ? <Check size={13} /> : <Copy size={13} />}
-              {copied ? "Copied" : "Copy"}
             </button>
             {!isBot && onRetry && (
               <button className="message-action-btn" onClick={() => onRetry(message)} title="Retry message">
                 <RotateCcw size={13} />
-                Retry
               </button>
             )}
             {isBot && (
               <button className="message-action-btn" onClick={handleDownloadMessage} title="Download markdown">
                 {downloaded ? <Check size={13} /> : <FileDown size={13} />}
-                {downloaded ? "Saved" : "Download"}
               </button>
             )}
           </div>
