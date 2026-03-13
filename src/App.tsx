@@ -16,6 +16,7 @@ function App() {
     status,
     view,
     chats,
+    chatsLoaded,
     activeChatId,
     sidebarWidth,
     pinnedChatIds,
@@ -33,6 +34,7 @@ function App() {
       status: state.status,
       view: state.view,
       chats: state.chats,
+      chatsLoaded: state.chatsLoaded,
       activeChatId: state.activeChatId,
       sidebarWidth: state.sidebarWidth,
       pinnedChatIds: state.pinnedChatIds,
@@ -121,16 +123,19 @@ function App() {
     }
   }, [view]);
 
-  // When ready and viewing chat with no active chat, open last chat or start a new one.
+  // When ready and viewing chat with no active chat, open latest chat (after chats have loaded)
+  // or start a new one only if there is truly no history.
   useEffect(() => {
     if (!status?.ready) return;
     if (view !== "chat") return;
     if (activeChatId !== null) return;
+    if (!chatsLoaded) return; // wait until chats have been fetched at least once
 
     if (chats.length > 0) {
-      const lastChat = chats[chats.length - 1];
-      if (lastChat?.chat_id != null) {
-        setActiveChatId(lastChat.chat_id);
+      // Chats are ordered with most-recent first; open the first entry.
+      const latestChat = chats[0];
+      if (latestChat?.chat_id != null) {
+        setActiveChatId(latestChat.chat_id);
       }
     } else {
       handleNewChat();
@@ -140,6 +145,7 @@ function App() {
     view,
     activeChatId,
     chats,
+    chatsLoaded,
     setActiveChatId,
     handleNewChat,
   ]);

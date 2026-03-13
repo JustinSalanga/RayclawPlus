@@ -10,6 +10,8 @@ interface ChatStoreState {
   status: AppStatus | null;
   view: View;
   chats: ChatSummary[];
+  /** Whether chats have been loaded at least once this session. */
+  chatsLoaded: boolean;
   activeChatId: number | null;
   sidebarWidth: number;
   pinnedChatIds: Set<number>;
@@ -41,6 +43,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
   status: null,
   view: "chat",
   chats: [],
+  chatsLoaded: false,
   activeChatId: null,
   sidebarWidth: (() => {
     const saved = localStorage.getItem("rayclaw-sidebar-width");
@@ -58,7 +61,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     const { status } = get();
     if (!status?.ready) return;
     const chats = await getChats();
-    set({ chats });
+    set({ chats, chatsLoaded: true });
   },
 
   setView: (view: View) => set({ view }),
