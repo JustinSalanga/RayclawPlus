@@ -40,7 +40,7 @@ export default function Sidebar({
   chats,
   activeChatId,
   onSelectChat,
-  onNewChat,
+  onNewChat: _onNewChat,
   onOpenSettings,
   onChatDeleted,
   width,
@@ -50,7 +50,6 @@ export default function Sidebar({
 }: SidebarProps) {
   const [menuChatId, setMenuChatId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -87,26 +86,20 @@ export default function Sidebar({
     return () => document.removeEventListener("mousedown", handler);
   }, [menuChatId]);
 
-  // Focus search on open
-  useEffect(() => {
-    if (searchOpen) searchRef.current?.focus();
-  }, [searchOpen]);
-
-  // Keyboard shortcut: Cmd/Ctrl+K to open search
+  // Keyboard shortcut: Cmd/Ctrl+K to focus sidebar search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
-        setSearchOpen(true);
+        searchRef.current?.focus();
       }
-      if (e.key === "Escape" && searchOpen) {
-        setSearchOpen(false);
+      if (e.key === "Escape") {
         setSearchQuery("");
       }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [searchOpen]);
+  }, []);
 
   const filteredChats = useMemo(() => {
     if (!searchQuery.trim()) return chats;
@@ -239,31 +232,15 @@ export default function Sidebar({
 
   return (
     <aside className="sidebar" style={{ width, minWidth: width }}>
-      <div className="sidebar-header">
-        <h2>VirusClaw</h2>
-        <div className="sidebar-header-actions">
-          <button
-            className="btn-icon"
-            onClick={() => { setSearchOpen(!searchOpen); if (searchOpen) setSearchQuery(""); }}
-            title="Search (Ctrl+K)"
-          >
-            <Search size={15} />
-          </button>
-          <button className="btn-new-chat" onClick={onNewChat} title="New Chat">
-            +
-          </button>
-        </div>
-      </div>
-
-      {/* Search bar */}
-      {searchOpen && (
-        <div className="sidebar-search">
+      <div className="sidebar-search">
+        <div className="sidebar-search-input-wrap">
+          <Search size={14} className="sidebar-search-icon" />
           <input
             ref={searchRef}
             className="sidebar-search-input"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search chats..."
+            placeholder="Search chats"
           />
           {searchQuery && (
             <button className="sidebar-search-clear" onClick={() => setSearchQuery("")}>
@@ -271,7 +248,7 @@ export default function Sidebar({
             </button>
           )}
         </div>
-      )}
+      </div>
 
       <div className="sidebar-list">
         {/* Pinned section */}

@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useShallow } from "zustand/react/shallow";
+import { CustomTitlebar } from "./components/CustomTitlebar";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
 import SetupScreen from "./components/SetupScreen";
@@ -98,12 +99,25 @@ function App() {
     refreshStatus();
   };
 
+  const [titlebarChatHeaderContent, setTitlebarChatHeaderContent] = useState<ReactNode>(null);
+
+  useEffect(() => {
+    if (view !== "chat" || !status?.ready) {
+      setTitlebarChatHeaderContent(null);
+    }
+  }, [view, status?.ready]);
+
   // Loading
   if (status === null) {
     return (
-      <div className="app-layout">
-        <div className="setup-screen">
-          <p style={{ color: "var(--muted)" }}>Loading...</p>
+      <div className="app-with-titlebar">
+        <CustomTitlebar chatHeaderContent={null} />
+        <div className="app-content">
+          <div className="app-layout">
+            <div className="setup-screen">
+              <p style={{ color: "var(--muted)" }}>Loading...</p>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -112,26 +126,41 @@ function App() {
   // Not configured — show setup screen (or settings if user clicked Configure)
   if (!status.ready && view !== "settings") {
     return (
-      <SetupScreen
-        error={status.error}
-        onConfigure={() => setView("settings")}
-      />
+      <div className="app-with-titlebar">
+        <CustomTitlebar chatHeaderContent={null} />
+        <div className="app-content">
+          <SetupScreen
+            error={status.error}
+            onConfigure={() => setView("settings")}
+          />
+        </div>
+      </div>
     );
   }
 
   // Settings page (accessible from setup screen or sidebar)
   if (view === "settings") {
     return (
-      <SettingsPage
-        onBack={() => setView("chat")}
-        onSaved={handleSettingsSaved}
-      />
+      <div className="app-with-titlebar">
+        <CustomTitlebar chatHeaderContent={null} />
+        <div className="app-content">
+          <SettingsPage
+            onBack={() => setView("chat")}
+            onSaved={handleSettingsSaved}
+          />
+        </div>
+      </div>
     );
   }
 
   return (
     <>
-      <div className="app-layout">
+      <div className="app-with-titlebar">
+        <CustomTitlebar
+          chatHeaderContent={titlebarChatHeaderContent}
+        />
+        <div className="app-content">
+          <div className="app-layout">
         <Sidebar
           chats={chats}
           activeChatId={activeChatId}
@@ -156,7 +185,10 @@ function App() {
           onTitleChanged={loadChats}
           searchOpen={chatSearchOpen}
           onSearchClose={closeChatSearch}
+          setTitlebarChatHeaderContent={setTitlebarChatHeaderContent}
         />
+          </div>
+        </div>
       </div>
       <NotificationCenter />
     </>

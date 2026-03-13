@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { MessageSquarePlus, Settings, X } from "lucide-react";
+import { MessageSquarePlus, Settings, Sparkles, X } from "lucide-react";
 import { getConfig, getHistory, renameChat, readAttachmentAsDataUrl, setShowThinking, stopAgent } from "../lib/tauri-api";
 import { inferChannel, channelLabel } from "../types";
 import type { StoredMessage } from "../types";
@@ -9,7 +9,7 @@ import { useChatStreaming } from "./chat/useChatStreaming";
 import { useChatSearch } from "./chat/useChatSearch";
 import { useAttachments } from "./chat/useAttachments";
 import { useSoulEditor } from "./chat/useSoulEditor";
-import { ChatHeader } from "./chat/ChatHeader";
+import type { ReactNode } from "react";
 import { ChatSearchBar } from "./chat/ChatSearchBar";
 import { ChatTimeline } from "./chat/ChatTimeline";
 import { ChatComposer } from "./chat/ChatComposer";
@@ -24,6 +24,7 @@ export interface ChatWindowProps {
   onTitleChanged?: () => void;
   searchOpen?: boolean;
   onSearchClose?: () => void;
+  setTitlebarChatHeaderContent?: (content: ReactNode) => void;
 }
 
 export default function ChatWindow({
@@ -35,6 +36,7 @@ export default function ChatWindow({
   onTitleChanged,
   searchOpen: searchOpenProp,
   onSearchClose,
+  setTitlebarChatHeaderContent,
 }: ChatWindowProps) {
   const channel = chatType ? inferChannel(chatType) : "desktop";
   const isReadOnly = channel !== "desktop";
@@ -148,7 +150,7 @@ export default function ChatWindow({
   useEffect(() => {
     getConfig()
       .then((cfg) => setShowThinkingState(Boolean(cfg.show_thinking)))
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   useEffect(() => {
@@ -303,10 +305,10 @@ export default function ChatWindow({
       a.path
         ? { path: a.path, data: "", media_type: a.type, name: a.name }
         : {
-            data: a.dataUrl.split(",")[1] || "",
-            media_type: a.type,
-            name: a.name,
-          },
+          data: a.dataUrl.split(",")[1] || "",
+          media_type: a.type,
+          name: a.name,
+        },
     );
     const hasImageAttachment = currentAttachments.some((a) => a.type.startsWith("image/"));
     const attachmentPreviews = currentAttachments.map(({ name, type, dataUrl, path }) => ({
@@ -388,6 +390,65 @@ export default function ChatWindow({
     [handleTitleConfirm],
   );
 
+  // Push chat header content (title + sparkle) to the custom titlebar when a chat is active.
+  useEffect(() => {
+    if (!setTitlebarChatHeaderContent) return;
+    if (chatId === null) {
+      setTitlebarChatHeaderContent(null);
+      return;
+    }
+    setTitlebarChatHeaderContent(
+      <div className="chat-header chat-header-in-titlebar">
+        <button
+          type="button"
+          className="chat-header-new-chat-btn"
+          title="New Chat"
+          onClick={onNewChat}
+        >
+          <MessageSquarePlus size={20} />
+          New Chat
+        </button>
+        <div className="chat-header-title-input-area">
+        {isEditingTitle ? (
+          <input
+            ref={titleInputRef}
+            className="chat-header-title-input"
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            onBlur={handleTitleConfirm}
+            onKeyDown={handleTitleKeyDown}
+          />
+        ) : (
+          <span className="chat-header-title" onDoubleClick={handleTitleDoubleClick}>
+            {badge && <span className="channel-badge">{badge}</span>}
+            {chatTitle || `Chat ${chatId}`}
+          </span>
+        )}
+        </div>
+        {isReadOnly && <span className="chat-header-readonly">View only</span>}
+        {!isReadOnly && (
+          <button className="chat-header-soul-btn" onClick={handleOpenSoul} title="Chat personality">
+            <Sparkles size={14} />
+          </button>
+        )}
+      </div>,
+    );
+    return () => setTitlebarChatHeaderContent(null);
+  }, [
+    setTitlebarChatHeaderContent,
+    chatId,
+    chatTitle,
+    badge,
+    isReadOnly,
+    isEditingTitle,
+    editTitle,
+    handleTitleDoubleClick,
+    handleTitleConfirm,
+    handleTitleKeyDown,
+    handleOpenSoul,
+    onNewChat,
+  ]);
+
   const resizeComposerTextarea = useCallback((element: HTMLTextAreaElement) => {
     element.style.height = "auto";
     element.style.height = Math.min(element.scrollHeight, 160) + "px";
@@ -421,7 +482,19 @@ export default function ChatWindow({
   if (chatId === null) {
     return (
       <main className="chat-window chat-window-empty">
-        <div className="chat-header" />
+        <div className="chat-header">
+          {onNewChat && (
+            <button
+              type="button"
+              className="chat-header-new-chat-btn"
+              onClick={onNewChat}
+              title="New Chat"
+            >
+              <MessageSquarePlus size={14} />
+              New chat
+            </button>
+          )}
+        </div>
         <div className="chat-empty-state">
           <img src={logoText} alt="VirusClaw" className="setup-logo" />
           <h2>Welcome to VirusClaw</h2>
@@ -456,21 +529,6 @@ export default function ChatWindow({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <ChatHeader
-        chatId={chatId}
-        chatTitle={chatTitle}
-        badge={badge}
-        isReadOnly={isReadOnly}
-        isEditingTitle={isEditingTitle}
-        editTitle={editTitle}
-        titleInputRef={titleInputRef}
-        onEditTitleChange={setEditTitle}
-        onTitleDoubleClick={handleTitleDoubleClick}
-        onTitleConfirm={handleTitleConfirm}
-        onTitleKeyDown={handleTitleKeyDown}
-        onOpenSoul={handleOpenSoul}
-      />
-
       {soulOpen && (
         <div className="chat-soul-panel">
           <div className="chat-soul-panel-header">
