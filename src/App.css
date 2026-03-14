@@ -568,6 +568,18 @@ body {
   flex-direction: row;
   align-items: center;
   justify-content: center;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--button-radius);
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.chat-status-stop-btn:hover {
+  border-color: var(--accent-hover);
+  color: var(--accent-hover);
 }
 
 .tool-step {
